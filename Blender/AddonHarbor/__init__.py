@@ -33,14 +33,6 @@ TRASH_WIDTH = 1.5      # ui_units: корзина
 DESC_WIDTH = 78        # символов в строке описания (полное окно)
 ERROR_WIDTH = 58       # символов в строке ошибки (узкий popup)
 POPUP_WIDTH = 460      # ширина popup в пикселях
-
-POPUP_AT_CENTER = True # False — открывать у курсора
-
-# оценка высоты popup для центрирования, в условных единицах интерфейса
-UI_UNIT_PX = 20        # пикселей в одной ui-единице при масштабе 1.0
-POPUP_BASE_UNITS = 7   # заголовок, статистика, две нижние кнопки
-POPUP_GROUP_UNITS = 1  # заголовок группы
-POPUP_ROW_UNITS = 2    # одна строка расширения
 INSTALLED_TTL = 2.0    # секунд: кэш списка установленного
 
 LOG = "[Addon Harbor]"
@@ -56,6 +48,7 @@ _state = {
     "expanded": set(),   # id расширений с раскрытым описанием
     "updates": 0,
     "installed": 0,
+    "tick": 0,           # счётчик для многоточия у надписи «Загрузка»
 }
 
 _installed_cache = {"data": {}, "time": 0.0}
@@ -280,9 +273,12 @@ def _on_token_changed():
             _log(f"применение токена: {exc}")
 
         if _token():
-            _fetch_index_async()
-        else:
-            _redraw()
+            # синхронно, а не фоном: открытый popup сам себя не перерисует,
+            # и лучше короткая пауза, чем окно, застрявшее на «Загрузка»
+            _fetch_index(force=True)
+            _invalidate_installed()
+            _recount()
+        _redraw()
         return None
 
     bpy.app.timers.register(apply, first_interval=0.0)
@@ -390,14 +386,15 @@ def _recount():
 
 # =============================================================== загрузка
 
-def _http_json(url, required):
+def _http_json(url, required, token=""):
     """Скачивает JSON. Возвращает (данные, ошибка).
 
     required=False — отсутствие файла (404) не считается ошибкой.
+    Токен передаётся аргументом: функция вызывается из фонового потока,
+    а читать bpy.context оттуда нельзя.
     """
     try:
         headers = {"User-Agent": "AddonHarbor/2.0"}
-        token = _token()
         if token:
             headers["Authorization"] = f"Bearer {token}"
         request = urllib.request.Request(url, headers=headers)
@@ -410,7 +407,7 @@ def _http_json(url, required):
             return None, "404 — файла нет по этому адресу. Проверь путь"
         if exc.code in (401, 403):
             reason = ("токен не принят — проверь, что он введён верно "
-                      "и ещё действует" if _token() else "нужен токен доступа")
+                      "и ещё действует" if token else "нужен токен доступа")
             return None, f"{exc.code} — доступ закрыт: {reason}"
         return None, f"HTTP {exc.code}: {exc.reason}"
     except urllib.error.URLError as exc:
@@ -426,12 +423,19 @@ def _http_json(url, required):
         return None, "по адресу лежит не JSON — ссылка должна вести на index.json"
 
 
-def _fetch_index(force=False):
-    """Читает index.json и harbor_extra.json. Синхронно."""
+def _fetch_index(force=False, token=None):
+    """Читает index.json и harbor_extra.json. Синхронно.
+
+    token=None — взять из настроек; из фонового потока его надо передать
+    заранее прочитанным, оттуда bpy.context недоступен.
+    """
     if _state["loaded"] and not force:
         return
 
-    data, error = _http_json(REPO_URL, required=True)
+    if token is None:
+        token = _token()
+
+    data, error = _http_json(REPO_URL, required=True, token=token)
     if error:
         _state.update(packages=[], error=error, loaded=True, loading=False)
         return
@@ -448,7 +452,8 @@ def _fetch_index(force=False):
     packages.sort(key=lambda item: (item.get("name") or item["id"]).lower())
 
     base = REPO_URL.rsplit("/", 1)[0]
-    extra, extra_error = _http_json(f"{base}/{EXTRA_FILE}", required=False)
+    extra, extra_error = _http_json(f"{base}/{EXTRA_FILE}", required=False,
+                                    token=token)
     if extra_error:
         _log(f"{EXTRA_FILE}: {extra_error}")
 
@@ -467,8 +472,28 @@ def _fetch_index_async():
         return
     _state["loading"] = True
 
+    # пока грузим, дёргаем перерисовку: сама по себе она не случится,
+    # а надпись «Загрузка…» должна шевелиться
+    def tick():
+        if not _state["loading"]:
+            _redraw()
+            return None
+        _state["tick"] += 1
+        _redraw()
+        return 0.25
+
+    bpy.app.timers.register(tick, first_interval=0.25)
+
+    # токен читаем здесь, в главном потоке, и отдаём потоку готовым
+    token = _token()
+
     def worker():
-        _fetch_index(force=True)
+        try:
+            _fetch_index(force=True, token=token)
+        except Exception as exc:
+            # без этого падение потока оставило бы вечную «Загрузку»
+            _state.update(packages=[], loaded=True,
+                          error=f"{type(exc).__name__}: {exc}")
 
         def apply():
             _state["loading"] = False
@@ -703,86 +728,12 @@ class ADDONHARBOR_OT_open_prefs(bpy.types.Operator):
         return {'FINISHED'}
 
 
-def _estimate_popup_height(context):
-    """Примерная высота popup в пикселях.
-
-    Точную высоту Blender не сообщает, поэтому считаем по содержимому:
-    popup рисуется вниз от курсора, и без этой оценки он уезжает
-    то выше, то ниже центра в зависимости от числа расширений.
-    """
-    packages = _state["packages"]
-    groups = len({
-        (package.get("tags") or [NO_TAG])[0] for package in packages
-    }) if packages else 1
-
-    units = (
-        POPUP_BASE_UNITS
-        + groups * POPUP_GROUP_UNITS
-        + len(packages) * POPUP_ROW_UNITS
-    )
-
-    try:
-        scale = context.preferences.system.ui_scale
-    except Exception:
-        scale = 1.0
-
-    return units * UI_UNIT_PX * scale
-
-
-def _center_cursor(context):
-    """Ставит курсор так, чтобы popup оказался по центру окна.
-
-    Своего API для позиционирования popup в Blender нет — он всегда
-    рисуется от курсора, поэтому двигаем курсор.
-    """
-    window = context.window
-    if window is None:
-        return False
-
-    height = _estimate_popup_height(context)
-
-    # координаты окна: начало отсчёта внизу слева.
-    # верхний край popup совпадает с курсором, значит поднимаем курсор
-    # на половину высоты выше центра
-    target_y = window.height * 0.5 + height * 0.5
-
-    # не выходим за края, иначе Blender сам сдвинет окно и центрирование
-    # потеряет смысл
-    margin = UI_UNIT_PX * 2
-    target_y = min(target_y, window.height - margin)
-    target_y = max(target_y, min(height + margin, window.height - margin))
-
-    try:
-        window.cursor_warp(int(window.width * 0.5), int(target_y))
-        return True
-    except Exception as exc:
-        _log(f"cursor_warp: {exc}")
-        return False
-
-
 class ADDONHARBOR_OT_open(bpy.types.Operator):
     bl_idname = "addon_harbor.open"
     bl_label = BUTTON_TEXT
     bl_description = "Список расширений приватного репозитория"
 
-    centered: bpy.props.BoolProperty(
-        default=True, options={'SKIP_SAVE', 'HIDDEN'}
-    )
-
     def invoke(self, context, event):
-        # событие клика несёт прежние координаты мыши, поэтому сдвигаем
-        # курсор и открываемся заново следующим тиком
-        if self.centered and POPUP_AT_CENTER and _center_cursor(context):
-            def reopen():
-                try:
-                    bpy.ops.addon_harbor.open('INVOKE_DEFAULT', centered=False)
-                except Exception as exc:
-                    _log(f"повторное открытие: {exc}")
-                return None
-
-            bpy.app.timers.register(reopen, first_interval=0.01)
-            return {'CANCELLED'}
-
         if _token():
             _ensure_repo()
             _fetch_index(force=True)
@@ -799,6 +750,10 @@ class ADDONHARBOR_OT_open(bpy.types.Operator):
 
         if not _token():
             _draw_token_form(layout)
+            return
+
+        if _state["loading"] or not _state["loaded"]:
+            _draw_loading(layout)
             return
 
         if _state["error"]:
@@ -857,6 +812,14 @@ def _draw_summary(layout, with_refresh=False):
         ),
         icon='IMPORT',
     )
+
+
+def _draw_loading(layout):
+    """Заглушка на время загрузки: пустой список и «загружается» — разные вещи."""
+    dots = "." * (_state["tick"] % 4)
+    row = layout.row()
+    row.enabled = False
+    row.label(text=f"Загрузка списка{dots}", icon='SORTTIME')
 
 
 def _draw_token_form(layout):
@@ -1024,6 +987,10 @@ class ADDONHARBOR_Preferences(bpy.types.AddonPreferences):
 
         layout.prop(self, "token")
         layout.separator(factor=0.5)
+
+        if _state["loading"] or not _state["loaded"]:
+            _draw_loading(layout)
+            return
 
         if _state["error"]:
             _draw_error(layout)

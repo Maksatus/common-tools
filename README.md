@@ -46,7 +46,7 @@ https://github.com/user-attachments/assets/04f233c9-0de7-48e7-b281-24943a4ebda0
 
 #### Скачать
 
-**[⬇ Скачать AddonHarbor-v0.2.1.zip](https://github.com/Maksatus/CommonTools/releases/download/addonharbor-v0.2.1/AddonHarbor-v0.2.1.zip)**
+**[⬇ Скачать AddonHarbor-v0.2.2.zip](https://github.com/Maksatus/CommonTools/releases/download/addonharbor-v0.2.2/AddonHarbor-v0.2.2.zip)**
 
 #### Установка
 
@@ -54,7 +54,7 @@ https://github.com/user-attachments/assets/04f233c9-0de7-48e7-b281-24943a4ebda0
 
 1. `Edit → Preferences → Get Extensions`
 2. Кнопка `⌄` справа сверху → `Install from Disk…`
-3. Выбрать скачанный `AddonHarbor-v0.2.1.zip`
+3. Выбрать скачанный `AddonHarbor-v0.2.2.zip`
 
 #### Использование
 
