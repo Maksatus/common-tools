@@ -20,17 +20,11 @@
 
 #### Скачать
 
-**[⬇ Скачать установщик](https://github.com/Maksatus/CommonTools/releases/latest/download/ToolsReset-Installer.bat)** — один файл, `custom-commands.json` уже внутри.
-
-Все версии — на странице [Releases](https://github.com/Maksatus/CommonTools/releases).
+**[⬇ Скачать установщик](https://github.com/Maksatus/CommonTools/releases/latest/download/ToolsReset-Installer.bat)**.
 
 #### Установка
 
 Запустить скачанный `ToolsReset-Installer.bat` — он сам закроет Fork, сделает бэкап старых команд и положит `custom-commands.json` в `%LOCALAPPDATA%\Fork`.
-
-Видео:
-
-https://github.com/user-attachments/assets/68127fa9-a824-4ad0-99bc-aa85158e4ed8
 
 #### Использование
 
