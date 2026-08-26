@@ -7,7 +7,7 @@ set "DEST=%DEST_DIR%\custom-commands.json"
 set "TMPJSON="
 
 echo ============================================
-echo  Установка команд Soft Reset для Fork
+echo  Установка Auto Soft Reset для Fork
 echo ============================================
 echo.
 
@@ -17,8 +17,8 @@ rem === PAYLOAD BEGIN (генерируется build.ps1, не править �
 rem === PAYLOAD END ===
 
 rem --- 1. берём команды либо из себя, либо из файла рядом ---
-set "TMPJSON=%TEMP%\toolsreset-custom-commands.json"
-set "TMPB64=%TEMP%\toolsreset-payload.b64"
+set "TMPJSON=%TEMP%\autosoftreset-custom-commands.json"
+set "TMPB64=%TEMP%\autosoftreset-payload.b64"
 
 if defined P (
     del "%TMPJSON%" >nul 2>&1

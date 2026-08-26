@@ -1,14 +1,17 @@
 ﻿<#
   Собирает самодостаточный установщик: берёт install-fork-commands.bat и
   вшивает в него custom-commands.json (base64) между маркерами PAYLOAD.
-  Результат: dist\ToolsReset-Installer.bat — один файл, который можно
+  Результат: dist\AutoSoftReset-<версия>.bat — один файл, который можно
   просто скачать и запустить, без custom-commands.json рядом.
 
-  Запуск:  powershell -ExecutionPolicy Bypass -File build.ps1
+  Запуск:  powershell -ExecutionPolicy Bypass -File build.ps1 -Version v0.1
 #>
 [CmdletBinding()]
 param(
-    [string]$OutDir
+    [string]$OutDir,
+
+    # попадает в имя файла: AutoSoftReset-v0.1.bat
+    [string]$Version = 'v0.1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,7 +62,8 @@ $out.AddRange([string[]]$lines[($end - 1)..($lines.Length - 1)])
 if (-not (Test-Path -LiteralPath $OutDir)) {
     New-Item -ItemType Directory -Path $OutDir | Out-Null
 }
-$outPath = Join-Path $OutDir 'ToolsReset-Installer.bat'
+if ($Version -notmatch '^v') { $Version = "v$Version" }
+$outPath = Join-Path $OutDir "AutoSoftReset-$Version.bat"
 
 # cmd ждёт CRLF, UTF-8 без BOM (в батнике chcp 65001)
 $text = ($out -join "`r`n") + "`r`n"

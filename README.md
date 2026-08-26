@@ -5,11 +5,11 @@
 ## Содержание
 
 - [Git](#git)
-  - [ToolsReset — Soft Reset для Fork](#toolsreset--soft-reset-для-fork)
+  - [Auto Soft Reset](#auto-soft-reset)
 
 ## Git
 
-### ToolsReset — Soft Reset для Fork
+### Auto Soft Reset
 
 Добавляет в [Fork](https://git-fork.com/) две кастомные команды:
 
@@ -20,11 +20,11 @@
 
 #### Скачать
 
-**[⬇ Скачать установщик](https://github.com/Maksatus/CommonTools/releases/latest/download/ToolsReset-Installer.bat)**.
+**[⬇ Скачать последнюю версию](https://github.com/Maksatus/CommonTools/releases/latest)** — файл `AutoSoftReset-vX.Y.bat` на странице релиза.
 
 #### Установка
 
-Запустить скачанный `ToolsReset-Installer.bat` — он сам закроет Fork, сделает бэкап старых команд и положит `custom-commands.json` в `%LOCALAPPDATA%\Fork`.
+Запустить скачанный `AutoSoftReset-vX.Y.bat` — он сам закроет Fork, сделает бэкап старых команд и положит `custom-commands.json` в `%LOCALAPPDATA%\Fork`.
 
 #### Использование
 

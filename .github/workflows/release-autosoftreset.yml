@@ -1,0 +1,77 @@
+name: Release Auto Soft Reset
+
+# Тег вида autosoftreset-v0.1 -> сборка установщика и релиз с ним.
+on:
+  push:
+    tags:
+      - 'autosoftreset-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Версия для тестовой сборки (без релиза), например v0.1'
+        required: false
+        default: 'v0.1-dev'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Определить версию
+        id: ver
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF -like 'refs/tags/*') {
+            ($env:GITHUB_REF -replace '^refs/tags/autosoftreset-', '')
+          } else {
+            '${{ github.event.inputs.version }}'
+          }
+          if (-not $version) { $version = "v0-dev" }
+          "version=$version" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Версия: $version"
+
+      - name: Собрать установщик
+        shell: pwsh
+        run: ./Git/AutoSoftReset/build.ps1 -Version '${{ steps.ver.outputs.version }}'
+
+      - name: Проверить, что payload распаковывается в исходный json
+        shell: pwsh
+        run: |
+          $bat = "Git/AutoSoftReset/dist/AutoSoftReset-${{ steps.ver.outputs.version }}.bat"
+          $lines = [IO.File]::ReadAllLines($bat)
+          $b64 = ($lines | Where-Object { $_ -like 'set "P=%P%*' } |
+                  ForEach-Object { $_.Substring(10, $_.Length - 11) }) -join ''
+          if (-not $b64) { throw 'В собранном установщике нет payload' }
+          $decoded = [Convert]::FromBase64String($b64)
+          $source  = [IO.File]::ReadAllBytes('Git/AutoSoftReset/custom-commands.json')
+          if (-not [Linq.Enumerable]::SequenceEqual([byte[]]$decoded, [byte[]]$source)) {
+            throw 'Вшитый json не совпадает с исходным'
+          }
+          Write-Host "payload ok ($($decoded.Length) байт)"
+
+      - name: Создать релиз
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF -replace '^refs/tags/', ''
+          $notes = @"
+          Auto Soft Reset — команды отмены коммитов для Fork.
+
+          Скачайте ``AutoSoftReset-${{ steps.ver.outputs.version }}.bat`` и запустите —
+          больше ничего не нужно, ``custom-commands.json`` уже вшит внутрь установщика.
+
+          ``custom-commands.json`` приложен отдельно на случай, если хочется
+          посмотреть, что именно ставится, или положить его в Fork руками.
+
+          Подробности и видео: [README](https://github.com/${env:GITHUB_REPOSITORY}#auto-soft-reset)
+          "@
+          gh release create $tag `
+            "Git/AutoSoftReset/dist/AutoSoftReset-${{ steps.ver.outputs.version }}.bat" `
+            'Git/AutoSoftReset/custom-commands.json' `
+            --title "Auto Soft Reset ${{ steps.ver.outputs.version }}" --notes $notes
