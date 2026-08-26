@@ -1,0 +1,58 @@
+name: Release Addon Harbor
+
+# Тег вида addonharbor-v2.1.1 -> сборка zip и релиз с ним.
+on:
+  push:
+    tags:
+      - 'addonharbor-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Собрать zip
+        id: build
+        shell: pwsh
+        run: |
+          ./Blender/AddonHarbor/build.ps1
+          $manifest = Get-Content 'Blender/AddonHarbor/blender_manifest.toml' -Raw
+          $version = [regex]::Match($manifest, '(?m)^\s*version\s*=\s*"([^"]+)"').Groups[1].Value
+          "version=v$version" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Сверить версию в манифесте с тегом
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $tagVersion = $env:GITHUB_REF -replace '^refs/tags/addonharbor-', ''
+          $manifestVersion = '${{ steps.build.outputs.version }}'
+          if ($tagVersion -ne $manifestVersion) {
+            throw "Тег ($tagVersion) не совпадает с version в blender_manifest.toml ($manifestVersion). Blender ориентируется на манифест — поправьте одно из двух."
+          }
+          Write-Host "версии совпадают: $tagVersion"
+
+      - name: Создать релиз
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF -replace '^refs/tags/', ''
+          $notes = @"
+          Addon Harbor — расширение для Blender 4.2+.
+
+          Скачайте ``AddonHarbor-${{ steps.build.outputs.version }}.zip`` и поставьте его в Blender:
+          Edit → Preferences → Get Extensions → кнопка ``⌄`` справа сверху → Install from Disk…
+
+          Распаковывать архив не нужно.
+
+          Подробности: [README](https://github.com/${env:GITHUB_REPOSITORY}#addon-harbor)
+          "@
+          gh release create $tag `
+            "Blender/AddonHarbor/dist/AddonHarbor-${{ steps.build.outputs.version }}.zip" `
+            --title "Addon Harbor ${{ steps.build.outputs.version }}" --notes $notes

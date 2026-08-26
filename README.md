@@ -6,6 +6,8 @@
 
 - [Git](#git)
   - [Auto Soft Reset](#auto-soft-reset)
+- [Blender](#blender)
+  - [Addon Harbor](#addon-harbor)
 
 ## Git
 
@@ -35,5 +37,27 @@
 Видео:
 
 https://github.com/user-attachments/assets/04f233c9-0de7-48e7-b281-24943a4ebda0
+
+## Blender
+
+### Addon Harbor
+
+Расширение для Blender 4.2+. Добавляет кнопку в топбаре, из которой можно ставить, обновлять и удалять расширения из этого репозитория.
+
+#### Скачать
+
+**[⬇ Скачать AddonHarbor-v0.2.1.zip](https://github.com/Maksatus/CommonTools/releases/download/addonharbor-v0.2.1/AddonHarbor-v0.2.1.zip)**
+
+#### Установка
+
+Распаковывать архив не нужно, Blender ставит расширения прямо из zip:
+
+1. `Edit → Preferences → Get Extensions`
+2. Кнопка `⌄` справа сверху → `Install from Disk…`
+3. Выбрать скачанный `AddonHarbor-v0.2.1.zip`
+
+#### Использование
+
+Кнопка **Addon Harbor** в топбаре открывает список расширений из репозитория.
 
 ---
