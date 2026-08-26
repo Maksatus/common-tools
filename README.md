@@ -20,11 +20,13 @@
 
 #### Скачать
 
-**[⬇ Скачать последнюю версию](https://github.com/Maksatus/CommonTools/releases/latest)** — файл `AutoSoftReset-vX.Y.bat` на странице релиза.
+**[⬇ Скачать AutoSoftReset-v0.1.bat](https://github.com/Maksatus/CommonTools/releases/download/autosoftreset-v0.1/AutoSoftReset-v0.1.bat)**
+
+Все версии — на странице [Releases](https://github.com/Maksatus/CommonTools/releases).
 
 #### Установка
 
-Запустить скачанный `AutoSoftReset-vX.Y.bat` — он сам закроет Fork, сделает бэкап старых команд и положит `custom-commands.json` в `%LOCALAPPDATA%\Fork`.
+Запустить скачанный `AutoSoftReset-v0.1.bat` — он сам закроет Fork, сделает бэкап старых команд и положит `custom-commands.json` в `%LOCALAPPDATA%\Fork`.
 
 #### Использование
 
