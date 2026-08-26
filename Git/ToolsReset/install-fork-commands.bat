@@ -2,20 +2,42 @@
 chcp 65001 >nul
 setlocal EnableExtensions
 
-set "SRC=%~dp0custom-commands.json"
 set "DEST_DIR=%LOCALAPPDATA%\Fork"
 set "DEST=%DEST_DIR%\custom-commands.json"
+set "TMPJSON="
 
 echo ============================================
 echo  Установка команд Soft Reset для Fork
 echo ============================================
 echo.
 
-rem --- 1. файл рядом с батником на месте? ---
-if not exist "%SRC%" (
-    echo [ОШИБКА] Рядом с этим файлом нет custom-commands.json
-    echo Положите оба файла в одну папку и запустите снова.
-    goto :end
+rem --- 0. встроенные команды (заполняется build.ps1 при сборке релиза) ---
+set "P="
+rem === PAYLOAD BEGIN (генерируется build.ps1, не править руками) ===
+rem === PAYLOAD END ===
+
+rem --- 1. берём команды либо из себя, либо из файла рядом ---
+set "TMPJSON=%TEMP%\toolsreset-custom-commands.json"
+set "TMPB64=%TEMP%\toolsreset-payload.b64"
+
+if defined P (
+    del "%TMPJSON%" >nul 2>&1
+    >"%TMPB64%" echo %P%
+    powershell -NoProfile -Command "[IO.File]::WriteAllBytes($env:TMPJSON, [Convert]::FromBase64String((Get-Content -Raw $env:TMPB64).Trim()))"
+    del "%TMPB64%" >nul 2>&1
+    if not exist "%TMPJSON%" (
+        echo [ОШИБКА] Не удалось распаковать встроенные команды.
+        goto :end
+    )
+    set "SRC=%TMPJSON%"
+) else (
+    set "SRC=%~dp0custom-commands.json"
+    if not exist "%SRC%" (
+        echo [ОШИБКА] Рядом с этим файлом нет custom-commands.json
+        echo Положите оба файла в одну папку и запустите снова,
+        echo либо скачайте готовый установщик из раздела Releases.
+        goto :end
+    )
 )
 
 rem --- 2. Fork вообще установлен? ---
@@ -74,6 +96,7 @@ echo   - Soft Reset to Remote
 echo.
 
 :end
+if defined TMPJSON del "%TMPJSON%" >nul 2>&1
 echo.
 pause
 endlocal

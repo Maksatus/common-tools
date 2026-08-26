@@ -18,11 +18,15 @@
 | **Soft Reset (undo last commit)** | `git reset --soft HEAD~1` — отменяет последний коммит, файлы из него возвращаются в незакоммиченные изменения. |
 | **Soft Reset to Remote** | `git reset --soft @{u}` — отменяет все коммиты, которые ещё не улетели на сервер. Файлы так же возвращаются в незакоммиченные изменения. |
 
-Файлы: [`Git/ToolsReset`](Git/ToolsReset)
+#### Скачать
+
+**[⬇ Скачать установщик](https://github.com/Maksatus/CommonTools/releases/latest/download/ToolsReset-Installer.bat)** — один файл, `custom-commands.json` уже внутри.
+
+Все версии — на странице [Releases](https://github.com/Maksatus/CommonTools/releases).
 
 #### Установка
 
-Запустить [`install-fork-commands.bat`](Git/ToolsReset/install-fork-commands.bat) — он сам закроет Fork, сделает бэкап старых команд и положит `custom-commands.json` в `%LOCALAPPDATA%\Fork`.
+Запустить скачанный `ToolsReset-Installer.bat` — он сам закроет Fork, сделает бэкап старых команд и положит `custom-commands.json` в `%LOCALAPPDATA%\Fork`.
 
 Видео:
 
@@ -32,6 +36,8 @@ https://github.com/user-attachments/assets/68127fa9-a824-4ad0-99bc-aa85158e4ed8
 
 Открыть Fork, нажать `Ctrl+P`, набрать `soft` и выбрать нужную команду.
 
-Видео: [Doc/Usage.mp4](Doc/Usage.mp4)
+Видео:
 
-https://github.com/user-attachments/assets/REPLACE_ME_USAGE
+https://github.com/user-attachments/assets/04f233c9-0de7-48e7-b281-24943a4ebda0
+
+---
