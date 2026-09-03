@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 id = "addon_harbor"
 name = "Addon Harbor"
-version = "0.2.2"
+version = "0.2.3"
 tagline = "One-click access to the private extension repository"
 maintainer = "You <you@example.com>"
 type = "add-on"

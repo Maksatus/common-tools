@@ -31,8 +31,7 @@ VERSION_WIDTH = 5.0    # ui_units: колонка версии
 ACTION_WIDTH = 7.0     # ui_units: кнопка Install / Update
 TRASH_WIDTH = 1.5      # ui_units: корзина
 DESC_WIDTH = 78        # символов в строке описания (полное окно)
-ERROR_WIDTH = 58       # символов в строке ошибки (узкий popup)
-POPUP_WIDTH = 460      # ширина popup в пикселях
+ERROR_WIDTH = 58       # символов в строке ошибки
 INSTALLED_TTL = 2.0    # секунд: кэш списка установленного
 
 LOG = "[Addon Harbor]"
@@ -45,7 +44,8 @@ _state = {
     "error": None,       # текст ошибки загрузки
     "loading": False,
     "loaded": False,
-    "expanded": set(),   # id расширений с раскрытым описанием
+    "collapsed": set(),  # id расширений со свёрнутым описанием
+                         # (по умолчанию описание раскрыто)
     "updates": 0,
     "installed": 0,
     "tick": 0,           # счётчик для многоточия у надписи «Загрузка»
@@ -273,8 +273,8 @@ def _on_token_changed():
             _log(f"применение токена: {exc}")
 
         if _token():
-            # синхронно, а не фоном: открытый popup сам себя не перерисует,
-            # и лучше короткая пауза, чем окно, застрявшее на «Загрузка»
+            # синхронно, а не фоном: короткая пауза лучше, чем окно,
+            # застрявшее на «Загрузка»
             _fetch_index(force=True)
             _invalidate_installed()
             _recount()
@@ -658,11 +658,11 @@ class ADDONHARBOR_OT_toggle_expand(bpy.types.Operator):
     pkg_id: bpy.props.StringProperty(options={'SKIP_SAVE'})
 
     def execute(self, context):
-        expanded = _state["expanded"]
-        if self.pkg_id in expanded:
-            expanded.discard(self.pkg_id)
+        collapsed = _state["collapsed"]
+        if self.pkg_id in collapsed:
+            collapsed.discard(self.pkg_id)
         else:
-            expanded.add(self.pkg_id)
+            collapsed.add(self.pkg_id)
         return {'FINISHED'}
 
 
@@ -726,62 +726,6 @@ class ADDONHARBOR_OT_open_prefs(bpy.types.Operator):
             _log(f"addon_search: {exc}")
 
         return {'FINISHED'}
-
-
-class ADDONHARBOR_OT_open(bpy.types.Operator):
-    bl_idname = "addon_harbor.open"
-    bl_label = BUTTON_TEXT
-    bl_description = "Список расширений приватного репозитория"
-
-    def invoke(self, context, event):
-        if _token():
-            _ensure_repo()
-            _fetch_index(force=True)
-            _invalidate_installed()
-            _recount()
-        return context.window_manager.invoke_popup(self, width=POPUP_WIDTH)
-
-    def execute(self, context):
-        return {'FINISHED'}
-
-    def draw(self, context):
-        layout = self.layout
-        layout.label(text=BUTTON_TEXT, icon='URL')
-
-        if not _token():
-            _draw_token_form(layout)
-            return
-
-        if _state["loading"] or not _state["loaded"]:
-            _draw_loading(layout)
-            return
-
-        if _state["error"]:
-            _draw_error(layout)
-            return
-
-        if not _state["packages"]:
-            layout.label(text="В репозитории нет расширений", icon='INFO')
-            return
-
-        installed = _installed_map()
-        _draw_summary(layout)
-        layout.separator(factor=0.5)
-
-        for tag, packages in _group_by_tag(_state["packages"]):
-            column = layout.column(align=True)
-            header = column.row()
-            header.scale_y = 0.9
-            header.label(text=tag, icon='BOOKMARKS')
-            for package in packages:
-                _draw_row(column, package, installed, allow_details=False)
-
-        layout.separator(factor=0.5)
-        layout.operator(
-            "addon_harbor.open_prefs",
-            text="Открыть полный список",
-            icon='PREFERENCES',
-        )
 
 
 # =============================================================== отрисовка
@@ -875,18 +819,14 @@ def _draw_error(layout):
     row.operator("addon_harbor.reset_repo", text="Пересоздать", icon='TRASH')
 
 
-def _draw_row(layout, package, installed, allow_details=True):
-    """Одна карточка расширения.
-
-    allow_details=False — только строка с кнопками (popup: клик по
-    «Подробнее» всё равно закрыл бы окно, так что смысла в ней нет).
-    """
+def _draw_row(layout, package, installed):
+    """Одна карточка расширения."""
     pkg_id = package["id"]
     remote_version = package.get("version")
     local_version = installed.get(pkg_id)
     is_installed = pkg_id in installed
     can_update = is_installed and _has_update(local_version, remote_version)
-    is_open = pkg_id in _state["expanded"]
+    is_open = pkg_id not in _state["collapsed"]
 
     description, links = _package_details(pkg_id)
     has_details = bool(description or links)
@@ -935,7 +875,7 @@ def _draw_row(layout, package, installed, allow_details=True):
     else:
         trash.label(text="")   # заглушка, иначе правый край прыгает
 
-    if not allow_details or not has_details:
+    if not has_details:
         return
 
     # --- стрелка отдельной строкой под текстом, чтобы не сдвигать название ---
@@ -1026,7 +966,7 @@ def _topbar_draw(self, context):
     # функция вызывается на каждую перерисовку интерфейса
     updates = _state["updates"]
     self.layout.operator(
-        "addon_harbor.open",
+        "addon_harbor.open_prefs",
         text=f"{BUTTON_TEXT} ({updates})" if updates else BUTTON_TEXT,
         icon='IMPORT' if updates else 'URL',
     )
@@ -1041,7 +981,6 @@ _classes = (
     ADDONHARBOR_OT_install_all,
     ADDONHARBOR_OT_toggle_expand,
     ADDONHARBOR_OT_reset_repo,
-    ADDONHARBOR_OT_open,
     ADDONHARBOR_OT_open_prefs,
     ADDONHARBOR_Preferences,
 )
