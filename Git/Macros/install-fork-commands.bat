@@ -7,7 +7,7 @@ set "DEST=%DEST_DIR%\custom-commands.json"
 set "TMPJSON="
 
 echo ============================================
-echo  Установка Auto Soft Reset для Fork
+echo  Установка Fork Macros
 echo ============================================
 echo.
 
@@ -17,8 +17,8 @@ rem === PAYLOAD BEGIN (генерируется build.ps1, не править �
 rem === PAYLOAD END ===
 
 rem --- 1. берём команды либо из себя, либо из файла рядом ---
-set "TMPJSON=%TEMP%\autosoftreset-custom-commands.json"
-set "TMPB64=%TEMP%\autosoftreset-payload.b64"
+set "TMPJSON=%TEMP%\forkmacros-custom-commands.json"
+set "TMPB64=%TEMP%\forkmacros-payload.b64"
 
 if defined P (
     del "%TMPJSON%" >nul 2>&1
@@ -89,10 +89,10 @@ echo ============================================
 echo  Готово!
 echo ============================================
 echo.
-echo Запустите Fork, нажмите Ctrl+P и наберите: soft
-echo Должны появиться две команды:
+echo Запустите Fork и нажмите Ctrl+P. Должны появиться три команды:
 echo   - Soft Reset (undo last commit)
 echo   - Soft Reset to Remote
+echo   - Merge develop into current branch
 echo.
 
 :end

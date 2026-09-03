@@ -1,7 +1,7 @@
 ﻿<#
   Собирает самодостаточный установщик: берёт install-fork-commands.bat и
   вшивает в него custom-commands.json (base64) между маркерами PAYLOAD.
-  Результат: dist\AutoSoftReset-<версия>.bat — один файл, который можно
+  Результат: dist\ForkMacros-<версия>.bat — один файл, который можно
   просто скачать и запустить, без custom-commands.json рядом.
 
   Запуск:  powershell -ExecutionPolicy Bypass -File build.ps1 -Version v0.1
@@ -10,7 +10,7 @@
 param(
     [string]$OutDir,
 
-    # попадает в имя файла: AutoSoftReset-v0.1.bat
+    # попадает в имя файла: ForkMacros-v0.1.bat
     [string]$Version = 'v0.1'
 )
 
@@ -63,7 +63,7 @@ if (-not (Test-Path -LiteralPath $OutDir)) {
     New-Item -ItemType Directory -Path $OutDir | Out-Null
 }
 if ($Version -notmatch '^v') { $Version = "v$Version" }
-$outPath = Join-Path $OutDir "AutoSoftReset-$Version.bat"
+$outPath = Join-Path $OutDir "ForkMacros-$Version.bat"
 
 # cmd ждёт CRLF, UTF-8 без BOM (в батнике chcp 65001)
 $text = ($out -join "`r`n") + "`r`n"

@@ -5,34 +5,35 @@
 ## Содержание
 
 - [Git](#git)
-  - [Auto Soft Reset](#auto-soft-reset)
+  - [Fork Macros](#fork-macros)
 - [Blender](#blender)
   - [Addon Harbor](#addon-harbor)
 
 ## Git
 
-### Auto Soft Reset
+### Fork Macros
 
-Добавляет в [Fork](https://git-fork.com/) две кастомные команды:
+Кастомные команды для [Fork](https://git-fork.com/) — один установщик, внутри все макросы:
 
 | Команда | Что делает |
 | --- | --- |
 | **Soft Reset (undo last commit)** | `git reset --soft HEAD~1` — отменяет последний коммит, файлы из него возвращаются в незакоммиченные изменения. |
 | **Soft Reset to Remote** | `git reset --soft @{u}` — отменяет все коммиты, которые ещё не улетели на сервер. Файлы так же возвращаются в незакоммиченные изменения. |
+| **Merge develop into current branch** | `git fetch` + `git merge --no-edit origin/develop` — обновляет `develop` с сервера и вливает его в текущую ветку. Только коммитит, ничего не пушит. |
 
 #### Скачать
 
-**[⬇ Скачать AutoSoftReset-v0.1.bat](https://github.com/Maksatus/CommonTools/releases/download/autosoftreset-v0.1/AutoSoftReset-v0.1.bat)**
+**[⬇ Скачать ForkMacros-v0.3.bat](https://github.com/Maksatus/CommonTools/releases/download/forkmacros-v0.3/ForkMacros-v0.3.bat)**
 
 Все версии — на странице [Releases](https://github.com/Maksatus/CommonTools/releases).
 
 #### Установка
 
-Запустить скачанный `AutoSoftReset-v0.1.bat` — он сам закроет Fork, сделает бэкап старых команд и положит `custom-commands.json` в `%LOCALAPPDATA%\Fork`.
+Запустить скачанный `ForkMacros-v0.3.bat` — он сам закроет Fork, сделает бэкап старых команд и положит `custom-commands.json` в `%LOCALAPPDATA%\Fork`.
 
 #### Использование
 
-Открыть Fork, нажать `Ctrl+P`, набрать `soft` и выбрать нужную команду.
+Открыть Fork, нажать `Ctrl+P` и выбрать нужную команду (`soft` — для сбросов, `merge` — для влития `develop`).
 
 Видео:
 
