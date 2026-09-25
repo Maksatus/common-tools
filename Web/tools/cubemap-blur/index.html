@@ -1,120 +1,85 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cubemap blur — угловое размытие без стыков</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<title>Размытие кубмапы</title>
+<link rel="stylesheet" href="../../shared/theme.css">
 
 <style>
-:root{
-  --bg:#E4E8EA; --panel:#FAFBFB; --ink:#101A24; --muted:#5C6B78;
-  --rule:#C6D0D6; --accent:#0B6E6E; --accent-ink:#F2F7F7; --warn:#8C3A12;
-  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
-  --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
-  --disp:"Archivo","IBM Plex Sans",system-ui,sans-serif;
-}
-*{box-sizing:border-box}
-html,body{margin:0}
-body{
-  background:var(--bg); color:var(--ink); font-family:var(--sans);
-  font-size:15px; line-height:1.5; padding:28px 20px 64px;
-  -webkit-font-smoothing:antialiased;
-}
-.wrap{max-width:900px;margin:0 auto}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px 48px}
 
 /* ---- header ---- */
-.eyebrow{
-  font-family:var(--mono); font-size:11px; letter-spacing:.16em;
-  text-transform:uppercase; color:var(--muted); margin:0 0 6px;
+header{
+  display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;
+  padding:18px 0 14px;border-bottom:1px solid var(--rule2);margin-bottom:16px;
 }
-h1{
-  font-family:var(--disp); font-weight:600; font-size:clamp(26px,4.4vw,40px);
-  letter-spacing:-.02em; margin:0 0 8px; line-height:1.05;
-}
-.lede{color:var(--muted); max-width:60ch; margin:0 0 26px}
-.lede b{color:var(--ink); font-weight:500}
+header p{margin:0;color:var(--ink2);font-size:12.5px;max-width:70ch}
+header p b{color:var(--ink);font-weight:500}
 
-/* ---- panels ---- */
-.panel{
-  background:var(--panel); border:1px solid var(--rule);
-  padding:18px 20px; margin-bottom:14px;
-}
-.panel-h{
-  font-family:var(--mono); font-size:11px; letter-spacing:.14em;
-  text-transform:uppercase; color:var(--muted);
-  display:flex; justify-content:space-between; gap:12px;
-  padding-bottom:10px; margin-bottom:14px; border-bottom:1px solid var(--rule);
-}
+.panel{margin-bottom:10px}
 
 /* ---- drop zone ---- */
 #drop{
-  border:1px dashed var(--rule); background:var(--panel);
-  padding:34px 20px; text-align:center; cursor:pointer;
-  transition:border-color .15s, background .15s;
+  border:1px dashed #4A4A4A; background:var(--field); border-radius:var(--radius-lg);
+  padding:26px 16px; text-align:center; cursor:pointer; margin-bottom:10px;
+  transition:border-color .12s, background .12s;
 }
-#drop:hover,#drop.hot{border-color:var(--accent); background:#F2F8F8}
-#drop:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
-#drop .big{font-family:var(--disp); font-weight:500; font-size:18px}
-#drop .sub{color:var(--muted); font-size:13px; margin-top:6px}
+#drop:hover,#drop.hot{border-color:var(--accent); background:var(--accent-soft)}
+#drop .big{font-weight:600; font-size:13.5px}
+#drop .sub{color:var(--ink2); font-size:12.5px; margin-top:3px}
 
 /* ---- face ruler: the six faces are real structure, so label them ---- */
 .ruler{display:grid; grid-template-columns:repeat(6,1fr); border-bottom:1px solid var(--rule)}
 .ruler span{
-  font-family:var(--mono); font-size:11px; color:var(--muted);
-  text-align:center; padding-bottom:5px; position:relative;
+  font-family:var(--mono); font-size:11px; color:var(--ink3);
+  text-align:center; padding-bottom:4px; position:relative;
 }
 .ruler span+span::before{
   content:""; position:absolute; left:0; top:2px; bottom:0; border-left:1px solid var(--rule);
 }
-canvas{display:block; width:100%; height:auto; image-rendering:auto; background:#D3DADE}
+canvas{display:block; width:100%; height:auto; image-rendering:auto; background:var(--field)}
 
 /* ---- controls ---- */
-.ctl{display:grid; grid-template-columns:112px 1fr 84px; gap:14px; align-items:center; margin-bottom:12px}
+.ctl{display:grid; grid-template-columns:130px 1fr 72px; gap:12px; align-items:center; margin-bottom:8px}
 .ctl:last-child{margin-bottom:0}
-.ctl label{font-size:13px; color:var(--muted)}
-.ctl output{font-family:var(--mono); font-size:13px; text-align:right; font-variant-numeric:tabular-nums}
-input[type=range]{width:100%; accent-color:var(--accent); margin:0}
-input[type=range]:focus-visible{outline:2px solid var(--accent); outline-offset:4px}
+.ctl label{font-size:12px; color:var(--ink2)}
+.ctl output{font-family:var(--mono); font-size:12px; text-align:right; font-variant-numeric:tabular-nums}
+input[type=range]{width:100%; margin:0}
 
-
-/* ---- format choice ---- */
-.fmt{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px}
+/* ---- format choice: переключатель, как enum в Blender ---- */
+.fmt{display:grid; grid-template-columns:1fr 1fr; gap:0; margin-bottom:10px}
 .fmt button{
-  font-family:var(--mono); font-size:13px; text-align:left; cursor:pointer;
-  background:#EDF1F2; color:var(--muted); border:1px solid var(--rule);
-  padding:9px 12px; line-height:1.35;
+  font-family:var(--mono); font-size:12px; font-weight:400; text-align:left;
+  background:var(--field); color:var(--ink2); border:1px solid var(--rule);
+  padding:6px 10px; line-height:1.35;
 }
-.fmt button small{display:block; font-size:11px; opacity:.85}
-.fmt button.on{background:#E3F0EF; border-color:var(--accent); color:var(--accent)}
-.fmt button:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
+.fmt button:first-child{border-radius:var(--radius) 0 0 var(--radius)}
+.fmt button:last-child{border-radius:0 var(--radius) var(--radius) 0;border-left:0}
+.fmt button:hover:not(.on){background:var(--raised)}
+.fmt button small{display:block; font-family:var(--sans); font-size:11px; color:var(--ink3)}
+.fmt button.on{background:var(--accent); border-color:var(--accent); color:var(--on-accent)}
+.fmt button.on small{color:var(--on-accent); opacity:.75}
 
 /* ---- buttons / meta ---- */
-button.go{
-  font-family:var(--disp); font-weight:500; font-size:15px;
-  background:var(--accent); color:var(--accent-ink); border:0;
-  padding:12px 22px; cursor:pointer; width:100%;
-}
-button.go:hover{background:#095C5C}
-button.go:disabled{background:#B7C1C7; color:#F0F3F4; cursor:default}
-button.go:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
-.meta{font-family:var(--mono); font-size:12px; color:var(--muted); display:grid; gap:3px}
+button.go{width:100%; min-height:32px}
+.meta{font-family:var(--mono); font-size:12px; color:var(--ink2); display:grid; gap:3px; margin:0}
 .meta b{color:var(--ink); font-weight:500}
 .hide{display:none !important}
-.err{
-  font-size:13.5px; color:var(--warn); background:#FBF0EA;
-  border:1px solid #E3C4B3; padding:11px 13px;
-}
-@media (prefers-reduced-motion:reduce){*{transition:none !important}}
+.err{font-size:12.5px; color:var(--warn); background:var(--warn-soft); border:1px solid #5A3E26; border-radius:var(--radius); padding:8px 10px; margin:0 0 10px}
 @media (max-width:560px){
   .ctl{grid-template-columns:1fr 62px; }
   .ctl label{grid-column:1/-1; margin-bottom:-6px}
 }
 </style>
+</head>
+<body>
 
 <div class="wrap">
-  <p class="eyebrow">Reflection probe / cubemap</p>
-  <h1>Угловое размытие без стыков</h1>
-  <p class="lede">Размывает кубмапу <b>по направлениям на сфере</b>, а не по пикселям атласа — поэтому грани сходятся. Принимает .hdr и .png.</p>
+  <header>
+    <h1>Размытие кубмапы</h1>
+    <p>Размывает кубмапу <b>по направлениям на сфере</b>, а не по пикселям атласа — поэтому грани сходятся. Принимает .hdr и .png.</p>
+  </header>
 
   <div id="drop" tabindex="0" role="button" aria-label="Выбрать файл">
     <div class="big">Перетащи сюда полосу 6:1 — .hdr или .png</div>
@@ -136,7 +101,7 @@ button.go:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
       </div>
       <div class="ruler"><span>+X</span><span>−X</span><span>+Y</span><span>−Y</span><span>+Z</span><span>−Z</span></div>
       <canvas id="cv" width="1536" height="256"></canvas>
-      <div style="height:18px"></div>
+      <div style="height:12px"></div>
       <div class="ctl">
         <label for="sig">Размытие</label>
         <input type="range" id="sig" min="0.5" max="40" step="0.5" value="8">
@@ -156,7 +121,7 @@ button.go:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
         <button id="fmt-hdr" role="radio" aria-checked="true" class="on">.hdr <small>Radiance, диапазон целиком</small></button>
         <button id="fmt-png" role="radio" aria-checked="false">.png <small>8 бит, ярче 1.0 обрежется</small></button>
       </div>
-      <button class="go" id="save">Скачать</button>
+      <button class="primary go" id="save">Скачать</button>
     </div>
 
   </div>
@@ -546,7 +511,7 @@ function draw() {
   ctx.putImageData(im, 0, 0);
   // hairlines on the five internal joins, so seams are easy to eyeball
   const S = cv.height;
-  ctx.fillStyle = "rgba(11,110,110,.85)";
+  ctx.fillStyle = "rgba(76,196,154,.8)";
   for (let f = 1; f < 6; f++) ctx.fillRect(f * S - 1, 0, 2, S);
 }
 

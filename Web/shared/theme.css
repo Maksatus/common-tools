@@ -1,0 +1,108 @@
+/* CommonTools — общий стиль всех веб-инструментов.
+   Тёмный, в духе Blender: плотная раскладка, изумрудный акцент.
+   Подключение: <link rel="stylesheet" href="../../shared/theme.css"> (из tools/<id>/),
+   <link rel="stylesheet" href="shared/theme.css"> (со стартовой страницы).
+
+   Токены:
+     --bg        фон окна              --ink   основной текст
+     --panel     панель                --ink2  второстепенный текст
+     --raised    кнопка, плитка        --ink3  подписи, подсказки
+     --field     поле ввода, превью    --rule  рамка панели,  --rule2  тонкий разделитель
+     --accent    заливка кнопки, ползунок      --on-accent  текст на заливке
+     --accent-ink  ссылка, выделенный текст     --accent-soft  подложка выбранного
+     --warn / --warn-soft  предупреждение
+   Классы: .panel + .panel-h (панель с шапкой), .hint, .mono, button.primary, .msg, .msg.warn */
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+:root{
+  color-scheme: dark;
+
+  --bg:#1D1D1D;
+  --panel:#282828;
+  --raised:#383838;
+  --raised-hover:#444444;
+  --field:#161616;
+
+  --ink:#E2E2E2;
+  --ink2:#A8A8A8;
+  --ink3:#737373;
+
+  --rule:#363636;
+  --rule2:#2E2E2E;
+
+  --accent:#1E7A5C;
+  --accent-hover:#248C6A;
+  --on-accent:#EAFBF4;
+  --accent-ink:#4CC49A;
+  --accent-soft:#1A332A;
+
+  --warn:#E3A46E;
+  --warn-soft:#3A2A1C;
+
+  --radius:4px;
+  --radius-lg:6px;
+
+  --sans:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+
+  accent-color:var(--accent);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:var(--sans); font-size:13px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+::selection{background:var(--accent);color:var(--on-accent)}
+
+h1{font-size:18px;font-weight:600;letter-spacing:-.01em;line-height:1.2;margin:0}
+h2,h3{font-weight:600}
+a{color:var(--accent-ink)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.hint{font-size:12px;color:var(--ink3);line-height:1.45}
+
+/* ---- panels ---- */
+.panel{background:var(--panel);border:1px solid var(--rule);border-radius:var(--radius-lg);padding:10px 12px 12px}
+.panel-h{
+  font-size:12px; font-weight:600; color:var(--ink2);
+  display:flex; justify-content:space-between; align-items:baseline; gap:12px;
+  margin:-2px 0 10px; padding-bottom:7px; border-bottom:1px solid var(--rule2);
+}
+
+/* ---- controls ---- */
+button{
+  font-family:inherit; font-size:13px; font-weight:500; color:var(--ink);
+  background:var(--raised); border:1px solid var(--rule); border-radius:var(--radius);
+  padding:5px 12px; min-height:28px; cursor:pointer;
+  transition:background .1s, border-color .1s;
+}
+button:hover:not(:disabled){background:var(--raised-hover)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+button.primary:hover:not(:disabled){background:var(--accent-hover);border-color:var(--accent-hover)}
+button:disabled{opacity:.4;cursor:default}
+
+select,input[type=text],input[type=number]{
+  font-family:inherit; font-size:13px; color:var(--ink);
+  background:var(--field); border:1px solid var(--rule); border-radius:var(--radius);
+  padding:4px 8px; min-height:28px;
+}
+select:hover,input[type=text]:hover,input[type=number]:hover{border-color:#4A4A4A}
+input[type=range]{accent-color:var(--accent)}
+input[type=checkbox]{accent-color:var(--accent)}
+
+:focus-visible{outline:2px solid var(--accent-ink);outline-offset:2px}
+
+/* ---- messages ---- */
+.msg{
+  padding:8px 10px; border-radius:var(--radius); font-size:12.5px;
+  background:var(--accent-soft); color:var(--ink); border:1px solid #24493B;
+}
+.msg.warn{background:var(--warn-soft);color:var(--warn);border-color:#5A3E26}
+
+/* ---- scrollbars ---- */
+*{scrollbar-color:#3E3E3E transparent;scrollbar-width:thin}
+
+@media (prefers-reduced-motion:reduce){*{transition:none !important;animation:none !important}}
