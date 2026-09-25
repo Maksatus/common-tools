@@ -6,6 +6,7 @@
 <title>Сборщик рампы</title>
 <link rel="stylesheet" href="../../shared/theme.css">
 <style>
+[hidden]{display:none !important}
 .wrap{max-width:1180px;margin:0 auto;padding:0 16px 48px}
 
 /* ---- header ---- */
@@ -29,6 +30,7 @@ header p{margin:0;color:var(--ink2);font-size:12.5px;max-width:70ch}
 }
 .strip.empty:hover,.strip.empty:focus-visible{border-color:var(--accent);background:var(--accent-soft)}
 .strip.drag{border-color:var(--accent-ink);background:var(--accent-soft);border-style:solid}
+.strip.nodata{border-style:dashed;background:var(--field);display:flex;align-items:center;justify-content:center;text-align:center;padding:16px}
 .drop-copy{font-size:12.5px;color:var(--ink2);max-width:52ch}
 .drop-copy b{color:var(--ink);font-weight:600;display:block;margin-bottom:3px;font-size:13.5px}
 .reveal img{clip-path:inset(0 0 0 0)}
@@ -91,7 +93,7 @@ th.num,td.num{text-align:right}
 /* ---- recon ---- */
 .recon{
   border:1px solid var(--rule);border-radius:var(--radius);background:var(--field);
-  display:block;width:100%;height:auto;
+  display:block;width:100%;height:auto;max-height:70vh;object-fit:contain;
 }
 .metric{
   display:flex;justify-content:space-between;align-items:baseline;gap:10px;
@@ -152,6 +154,15 @@ th.num,td.num{text-align:right}
     </div>
 
     <div class="field">
+      <label for="avgmode">Цвет на каждом уровне</label>
+      <select id="avgmode">
+        <option value="sat">Приоритет насыщенным — без серой грязи</option>
+        <option value="mean">Простое среднее</option>
+      </select>
+      <p class="hint">Если на одной яркости смешаны оранжевые и бледные пиксели, простое среднее даёт серо-оливковый цвет, которого в текстуре нет. Приоритет насыщенным берёт в основном яркие цвета.</p>
+    </div>
+
+    <div class="field">
       <label for="luma">Как считать яркость</label>
       <select id="luma">
         <option value="709">Rec. 709 — 0.2126 R + 0.7152 G + 0.0722 B</option>
@@ -176,7 +187,7 @@ th.num,td.num{text-align:right}
       <input type="range" id="alpha" min="0" max="255" step="1" value="8">
     </div>
 
-    <label class="check"><input type="checkbox" id="unmult"> <span>Снять умножение на альфу — для текстур, где цвет уже помножен на прозрачность</span></label>
+    <label class="check"><input type="checkbox" id="unmult"> <span>Снять умножение на альфу — для текстур, где цвет уже помножен на прозрачность. Если ч/б версия помножена тоже, это распознаётся само</span></label>
 
     <button id="reset" style="margin-top:14px">Загрузить другое изображение</button>
     <p class="hint" id="srcinfo"></p>
@@ -202,9 +213,10 @@ th.num,td.num{text-align:right}
     <h2>Проверка и экспорт</h2>
     <canvas class="recon" id="recon" width="10" height="10"></canvas>
     <div class="metric">
-      <span class="k">Средняя ошибка по видимым пикселям</span>
+      <span class="k">Совпадение с оригиналом</span>
       <span class="n mono" id="err">—</span>
     </div>
+    <p class="hint" id="errdetail"></p>
     <p class="verdict" id="verdict"></p>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px">
@@ -234,6 +246,14 @@ th.num,td.num{text-align:right}
       </div>
     </div>
     <p class="hint" id="sizehint"></p>
+    <div class="field">
+      <label for="colorspace">Цветовое пространство проекта Unity</label>
+      <select id="colorspace">
+        <option value="linear" selected>Linear — по умолчанию в URP и HDRP</option>
+        <option value="gamma">Gamma</option>
+      </select>
+      <p class="hint">Влияет только на превью и оценку: в Linear соседние цвета рампы смешиваются в линейном пространстве, и при узкой рампе или малом числе полос результат заметно другой.</p>
+    </div>
     <div class="btnrow">
       <button class="primary" id="saveboth" disabled>Сохранить рампу + ч/б</button>
       <button id="save" disabled>Только рампу</button>
@@ -255,11 +275,17 @@ var el = function(id){ return document.getElementById(id); };
 var state = {
   colorImg:null, lumaImg:null, names:null,
   colorData:null, lumaData:null, w:0, h:0,
+  lumaPremul:false,           // ч/б версия помножена на альфу (см. greyIsPremultiplied)
   L:null, Q:null,             // яркость и оттенок каждого пикселя, 0..255 — ровно то, что уйдёт в ч/б
   r1:null, r2:null, bands:1,  // 1D-рампа 256×3 и 2D-рампа 256×bands×3 (float)
   ramp:null, valid:null, keypoints:[],
-  img:null, W:0, H:0          // экспортируемая рампа W×H, байты RGBA
+  img:null, W:0, H:0,         // экспортируемая рампа W×H, байты RGBA
+  pass1:null,                 // кэш первого прохода по пикселям (см. compute)
+  fresh:false,                // только что загружено новое изображение — показать рампу с анимацией
+  loadNote:null,              // предупреждение о входных файлах текущей загрузки {text, kind}
+  saved:{}                    // по имени текстуры: отпечаток ч/б на момент последнего сохранения рампы и ч/б
 };
+
 
 /* ---------- loading ---------- */
 
@@ -275,7 +301,7 @@ async function readImage(file){
   return {img:img, name:file.name};
 }
 
-function pixels(img){
+function pixelsCanvas(img){
   var c = document.createElement("canvas");
   c.width = img.naturalWidth; c.height = img.naturalHeight;
   var ctx = c.getContext("2d", {willReadFrequently:true});
@@ -283,67 +309,244 @@ function pixels(img){
   return ctx.getImageData(0, 0, c.width, c.height).data;
 }
 
-/* is this image effectively greyscale? sample a grid of pixels */
-function isGrey(data, w, h){
-  var step = Math.max(1, Math.floor(Math.sqrt(w*h/4000)));
-  var checked = 0, coloured = 0;
-  for (var y = 0; y < h; y += step){
-    for (var x = 0; x < w; x += step){
-      var o = (y*w + x) * 4;
-      if (data[o+3] < 8) continue;
-      checked++;
-      var r = data[o], g = data[o+1], b = data[o+2];
-      if (Math.abs(r-g) > 4 || Math.abs(g-b) > 4 || Math.abs(r-b) > 4) coloured++;
+/* 2D-canvas хранит цвет уже помноженным на альфу, поэтому у полупрозрачных пикселей getImageData
+   возвращает огрублённый цвет, а при альфе 0 — чёрный. WebGL без премультипликации отдаёт байты файла как есть. */
+function pixelsExact(img){
+  var gl = null;
+  try {
+    var w = img.naturalWidth, h = img.naturalHeight;
+    gl = document.createElement("canvas").getContext("webgl", {premultipliedAlpha:false, antialias:false, depth:false, stencil:false});
+    if (!gl) return null;
+    var max = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    if (w > max || h > max) return null;
+    gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, gl.createFramebuffer());
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, gl.getParameter(gl.TEXTURE_BINDING_2D), 0);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) return null;
+    var out = new Uint8Array(w*h*4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, out);
+    if (gl.getError() !== gl.NO_ERROR) return null;
+    return new Uint8ClampedArray(out.buffer);
+  } catch(e){
+    return null;
+  } finally {
+    var lose = gl && gl.getExtension("WEBGL_lose_context");
+    if (lose) lose.loseContext();
+  }
+}
+
+/* Сверка WebGL с 2D-canvas по 64 строкам, разбросанным по всей высоте. Непрозрачные пиксели canvas читает без
+   потерь — они должны совпасть байт в байт. Полупрозрачные canvas хранит помноженными на альфу, поэтому их
+   сравниваем тоже в помноженном виде, с допуском на округление. Так ловится и WebGL, который сам что-то умножил
+   или перевёл в другое цветовое пространство. */
+function sameAsCanvas(img, exact){
+  var w = img.naturalWidth, h = img.naturalHeight, rows = Math.min(h, 64);
+  var c = document.createElement("canvas");
+  c.width = w; c.height = 1;
+  var ctx = c.getContext("2d", {willReadFrequently:true});
+  ctx.imageSmoothingEnabled = false;
+  for (var k = 0; k < rows; k++){
+    var y = Math.floor((k + 0.5) * h / rows);
+    ctx.clearRect(0, 0, w, 1);
+    ctx.drawImage(img, 0, y, w, 1, 0, 0, w, 1);
+    var ref = ctx.getImageData(0, 0, w, 1).data, base = y*w*4;
+    for (var i = 0; i < ref.length; i += 4){
+      var a = ref[i+3], o = base + i;
+      if (exact[o+3] !== a) return false;
+      if (a === 0) continue;
+      for (var ch = 0; ch < 3; ch++){
+        var e = exact[o+ch], r = ref[i+ch];
+        if (a === 255 ? e !== r : Math.abs(Math.round(e*a/255) - Math.round(r*a/255)) > 1) return false;
+      }
     }
   }
-  if (checked < 20) return false;
-  return coloured / checked < 0.01;
+  return true;
 }
 
+function pixels(img){
+  var exact = pixelsExact(img);
+  if (exact && sameAsCanvas(img, exact)) return exact;
+  return pixelsCanvas(img);
+}
+
+/* насколько изображение цветное. Почти чёрные пиксели оттенка не несут и не учитываются: иначе цветные искры
+   на чёрном фоне (меньше 1% кадра) выглядели бы как ч/б картинка. chroma — средний разброс каналов, по нему
+   из двух файлов выбирается цветной */
+function colourStats(data){
+  var checked = 0, coloured = 0, spread = 0, aMin = Math.max(1, +el("alpha").value);
+  for (var o = 0; o < data.length; o += 4){
+    if (data[o+3] < aMin) continue;
+    var r = data[o], g = data[o+1], b = data[o+2];
+    if (r < 16 && g < 16 && b < 16) continue;
+    var d = Math.max(r, g, b) - Math.min(r, g, b);
+    checked++; spread += d;
+    if (d > 4) coloured++;
+  }
+  return {grey: checked >= 20 && coloured / checked < 0.01, chroma: checked ? spread / checked : 0};
+}
+
+/* Помножена ли ч/б версия на альфу так же, как цвет? Нужно только при включённом «снять умножение», и делить её
+   на альфу вслепую нельзя: ч/б бывает и прямой. Помноженная ч/б никогда не ярче альфы — если заметная доля
+   пикселей ярче, она точно прямая. Иначе выбираем прочтение, при котором (уже освобождённые от альфы) цвета
+   внутри каждого уровня яркости разбросаны меньше: ровно это и нужно для рампы. Сравнивать с яркостью самого
+   цвета нельзя: рампа может сильно менять яркость (лёд, дым), и тогда прямая ч/б похожа на помноженную. */
+function greyIsPremultiplied(grey, col){
+  var semi = 0, over = 0;
+  var n1 = new Float64Array(256), s1 = new Float64Array(768), n2 = new Float64Array(256), s2 = new Float64Array(768);
+  var ss1 = 0, ss2 = 0;
+  for (var o = 0; o < col.length; o += 4){
+    var a = col[o+3];
+    if (a < 8 || a > 247) continue;
+    semi++;
+    var g = grey[o];
+    if (g > a + 2) over++;
+    var l1 = g, l2 = Math.min(255, Math.round(g * 255 / a)), k = 255 / a;
+    n1[l1]++; n2[l2]++;
+    for (var ch = 0; ch < 3; ch++){
+      var c = Math.min(255, col[o+ch] * k);
+      s1[l1*3+ch] += c; s2[l2*3+ch] += c;
+      ss1 += c*c; ss2 += c*c;
+    }
+  }
+  if (semi < 20 || over > semi * 0.01) return false;
+  /* разброс внутри уровней = Σc² − Σ(Σc)²/n; Σc² у обоих прочтений общий */
+  var b1 = 0, b2 = 0;
+  for (var v = 0; v < 256; v++){
+    for (var ch2 = 0; ch2 < 3; ch2++){
+      if (n1[v]) b1 += s1[v*3+ch2] * s1[v*3+ch2] / n1[v];
+      if (n2[v]) b2 += s2[v*3+ch2] * s2[v*3+ch2] / n2[v];
+    }
+  }
+  var w1 = ss1 - b1, w2 = ss2 - b2;
+  return w2 < w1 * 0.9;
+}
+
+/* насколько одиночная ч/б похожа на яркость уже загруженной цветной картинки (корреляция, −1…1). Совсем
+   непохожая — другая текстура того же размера (например, белый дым), её яркостью не делаем. Формула яркости
+   и умножение на альфу у ч/б версии могут быть любыми, поэтому берём лучшую корреляцию из нескольких вариантов;
+   у сильно стилизованной ч/б она может быть и средней. */
+function greyCorrelation(grey, col){
+  var npx = col.length / 4, step = Math.max(1, Math.floor(npx / 200000));
+  var V = 9, n = 0, sx = 0, sxx = 0, sy = new Float64Array(V), syy = new Float64Array(V), sxy = new Float64Array(V), y = new Float64Array(V);
+  for (var i = 0; i < npx; i += step){
+    var o = i*4, a = col[o+3];
+    if (a < 8) continue;
+    var r = col[o], g = col[o+1], b = col[o+2], x = grey[o];
+    var ls = [0.2126*r + 0.7152*g + 0.0722*b, Math.max(r, g, b), (r + g + b) / 3];
+    for (var f = 0; f < 3; f++){
+      y[f*3] = ls[f]; y[f*3+1] = ls[f] * a / 255; y[f*3+2] = Math.min(255, ls[f] * 255 / a);
+    }
+    n++; sx += x; sxx += x*x;
+    for (var v = 0; v < V; v++){ sy[v] += y[v]; syy[v] += y[v]*y[v]; sxy[v] += x*y[v]; }
+  }
+  if (n < 20) return 0;
+  var vx = sxx - sx*sx/n, best = 0;
+  for (var v2 = 0; v2 < V; v2++){
+    var vy = syy[v2] - sy[v2]*sy[v2]/n, cov = sxy[v2] - sx*sy[v2]/n;
+    if (vx > 0 && vy > 0) best = Math.max(best, cov / Math.sqrt(vx*vy));
+  }
+  return best;
+}
+
+/* kind: "warn" — предупреждение о входных файлах, "data" — нехватка данных или памяти (снимается, как только
+   расчёт удался), остальное — справка, которую можно убрать */
 function show(text, kind){
   var m = el("msg");
-  if (!text){ m.hidden = true; return; }
+  if (!text){ m.hidden = true; m.textContent = ""; m.dataset.kind = ""; return; }
   m.hidden = false;
   m.textContent = text;
-  m.style.color = kind === "warn" ? "var(--warn)" : "var(--ink)";
+  m.dataset.kind = kind || "info";
+  m.style.color = kind === "warn" || kind === "data" ? "var(--warn)" : "var(--ink)";
 }
 
-async function handleFiles(list){
+/* сообщение о входных файлах живёт, пока загружен этот файл: его может временно перекрыть «мало данных» */
+function showLoadNote(){
+  var n = state.loadNote;
+  show(n ? n.text : "", n ? n.kind : "");
+}
+
+/* файлы обрабатываются строго по очереди: если бросить цветную версию, а за ней, пока та ещё читается, ч/б,
+   ч/б должна достаться именно ей; а из «большой, потом маленький» в итоге остаётся маленький */
+var loadQueue = Promise.resolve();
+
+function handleFiles(list){
   var files = Array.prototype.slice.call(list).filter(function(f){ return /^image\//.test(f.type); });
   if (!files.length){ show("Это не изображение. Нужен PNG, JPG, WEBP или другой растровый файл.", "warn"); return; }
-  if (files.length > 2) files = files.slice(0, 2);
-  show("");
-
-  var loaded;
-  try { loaded = await Promise.all(files.map(readImage)); }
-  catch(e){ show(e.message, "warn"); return; }
-
-  var entries = loaded.map(function(L){
-    var d = pixels(L.img);
-    return {img:L.img, name:L.name, data:d, grey:isGrey(d, L.img.naturalWidth, L.img.naturalHeight)};
+  loadQueue = loadQueue.then(function(){ return loadFiles(files); }).catch(function(e){
+    show("Не удалось загрузить: " + (e && e.message ? e.message : e), "warn");
   });
+}
 
-  var colour = null, grey = null;
+async function loadFiles(files){
+  var extra = files.length > 2;
+  if (extra) files = files.slice(0, 2);
+  var single = files.length === 1;
+  show("Читаю " + files.map(function(f){ return f.name; }).join(" и ") + "…");
+
+  var settled = await Promise.allSettled(files.map(readImage));
+  var loaded = [], notes = [];
+  settled.forEach(function(s){
+    if (s.status === "fulfilled") loaded.push(s.value); else notes.push(s.reason.message + ".");
+  });
+  if (!loaded.length){ show(notes.join(" "), "warn"); return; }
+
+  var entries;
+  try {
+    entries = loaded.map(function(L){
+      var d = pixels(L.img), st = colourStats(d);
+      return {img:L.img, name:L.name, data:d, grey:st.grey, chroma:st.chroma};
+    });
+  } catch(e){
+    show("Браузеру не хватило памяти, чтобы прочитать изображение. Уменьшите его и попробуйте снова.", "warn");
+    return;
+  }
+
+  var colour = null, grey = null, info = "", corr = 0;
   if (entries.length === 1){
-    colour = entries[0];
-    if (colour.grey){
-      show("Изображение чёрно-белое — извлекать из него нечего. Нужна цветная версия.", "warn");
+    var one = entries[0];
+    if (!one.grey){
+      colour = one;
+    } else if (single && state.colorData && one.img.naturalWidth === state.w && one.img.naturalHeight === state.h &&
+               (corr = greyCorrelation(one.data, state.colorData)) >= 0.3){
+      /* отдельно выбранная ч/б версия уже загруженной цветной картинки — берём её как яркость */
+      colour = {img:state.colorImg, name:state.names.colour, data:state.colorData};
+      grey = one;
+      if (corr >= 0.8) info = "Чёрно-белая версия " + one.name + " добавлена к " + state.names.colour + ": яркость теперь берётся из неё.";
+      else notes.push("Чёрно-белое изображение " + one.name + " взято яркостью для " + state.names.colour +
+        ", хотя на его яркость похоже слабо. Если это другая текстура, а не ч/б версия, снова выберите " + state.names.colour + ".");
+    } else {
+      var why = "Изображение " + one.name + " чёрно-белое — извлекать из него нечего. Нужна цветная версия";
+      if (single && state.colorData){
+        why += one.img.naturalWidth !== state.w || one.img.naturalHeight !== state.h
+          ? ". Яркостью для " + state.names.colour + " оно быть не может: другой размер"
+          : ". На ч/б версию " + state.names.colour + " оно совсем не похоже, поэтому яркостью не стало. Если это всё же она, выберите оба файла вместе";
+      }
+      notes.push(why + ".");
+      show(notes.join(" "), "warn");
       return;
     }
   } else {
-    var greys = entries.filter(function(e){ return e.grey; });
-    var cols  = entries.filter(function(e){ return !e.grey; });
-    if (cols.length === 0){ show("Оба файла чёрно-белые. Нужна хотя бы одна цветная версия.", "warn"); return; }
-    colour = cols[0];
-    grey = greys.length ? greys[0] : null;
-    if (!grey && cols.length === 2){
-      show("Оба файла цветные — яркость посчитаю сама по первому. Второй не использую.", "warn");
-    }
+    if (entries[0].grey && entries[1].grey){ show("Оба файла чёрно-белые. Нужна хотя бы одна цветная версия.", "warn"); return; }
+    /* цветной — тот, у кого разброс каналов больше, а не тот, что первым пришёл в списке. Второй считается ч/б,
+       если распознан как ч/б или его разброс — лишь шум на фоне цветного */
+    var byChroma = entries.slice().sort(function(a, b){ return b.chroma - a.chroma; });
+    colour = byChroma[0];
+    var other = byChroma[1];
+    if (other.grey || other.chroma < Math.min(6, colour.chroma / 4)) grey = other;
+    else notes.push("Оба файла цветные — беру более насыщенный " + colour.name + ", яркость посчитаю по формуле. " + other.name + " не использую.");
     if (grey && (grey.img.naturalWidth !== colour.img.naturalWidth || grey.img.naturalHeight !== colour.img.naturalHeight)){
-      show("Размеры файлов не совпадают, поэтому чёрно-белую версию не использую. Яркость посчитаю сама.", "warn");
+      notes.push("Размеры файлов не совпадают, поэтому чёрно-белую версию не использую. Яркость посчитаю сама.");
       grey = null;
     }
   }
+  if (extra) notes.push("Выбрано больше двух файлов — использую первые два.");
+  state.loadNote = notes.length ? {text:notes.concat(info ? [info] : []).join(" "), kind:"warn"}
+                 : info ? {text:info, kind:"info"} : null;
+  showLoadNote();
 
   state.colorImg = colour.img;
   state.colorData = colour.data;
@@ -351,11 +554,15 @@ async function handleFiles(list){
   state.h = colour.img.naturalHeight;
   state.lumaImg = grey ? grey.img : null;
   state.lumaData = grey ? grey.data : null;
+  state.lumaPremul = grey ? greyIsPremultiplied(grey.data, colour.data) : false;
   state.names = {colour: colour.name, grey: grey ? grey.name : null};
 
   el("luma").disabled = !!grey;
+  state.fresh = true;
+  state.pass1 = null;
+  state.L = state.Q = state.lut = null;   // освободить память прошлого изображения до расчёта нового
   drawThumbs();
-  compute();
+  recomputeAll();
 }
 
 function drawThumbs(){
@@ -397,6 +604,14 @@ function lumaOf(r, g, b, mode){
 
 function is2D(){ return el("mode").value === "2d"; }
 
+/* вес пикселя при усреднении: в режиме «насыщенные» бледные пиксели почти не влияют */
+function weightOf(c, satMode){
+  if (!satMode) return 1;
+  var mx = Math.max(c[0], c[1], c[2]), mn = Math.min(c[0], c[1], c[2]);
+  var s = mx > 0 ? (mx - mn) / mx : 0;
+  return s*s + 0.001;
+}
+
 /* цвет пикселя с учётом галочки «снять умножение» */
 function pix(col, o, unmult, out){
   var a = col[o+3], r = col[o], g = col[o+1], b = col[o+2];
@@ -406,6 +621,9 @@ function pix(col, o, unmult, out){
   }
   out[0] = r; out[1] = g; out[2] = b;
 }
+
+/* почти чёрный пиксель — фон: оттенка у него нет, и в оценку он не входит */
+function isBlack(c){ return c[0] <= 10 && c[1] <= 10 && c[2] <= 10; }
 
 /* заполнение пропусков по уровням яркости линейной интерполяцией; vals — n×3, known — флаги */
 function fillGaps(vals, known, fallback){
@@ -459,36 +677,55 @@ function compute(){
   var twoD = is2D();
   var H = +el("outh").value;
   var bands = twoD ? Math.max(2, H) : 1;
+  var satMode = el("avgmode").value === "sat";
 
-  var L = new Uint8Array(n), Q = new Uint8Array(n);
-  var sum = new Float64Array(256*3), cnt = new Float64Array(256);
+  var Q = new Uint8Array(n).fill(128);
   var c = [0,0,0];
 
-  /* проход 1: яркость каждого пикселя и 1D-суммы */
-  for (var i = 0; i < n; i++){
-    var o = i*4;
-    pix(col, o, unmult, c);
-    var l = lum ? lum[o] : lumaOf(c[0], c[1], c[2], mode);
-    l = l < 0 ? 0 : (l > 255 ? 255 : Math.round(l));
-    L[i] = l;
-    Q[i] = 128;
-    if (col[o+3] < alphaMin) continue;
-    cnt[l]++; sum[l*3] += c[0]; sum[l*3+1] += c[1]; sum[l*3+2] += c[2];
+  /* проход 1: яркость каждого пикселя и 1D-суммы. От минимума на уровень, сглаживания и режима он не зависит,
+     поэтому при движении этих ползунков берётся из кэша — на больших текстурах это основная часть времени */
+  var key = [mode, alphaMin, unmult, satMode].join("|");
+  var p1 = state.pass1;
+  if (!p1 || p1.key !== key){
+    var L0 = new Uint8Array(n);
+    var sum0 = new Float64Array(256*3), cnt0 = new Float64Array(256), wsum0 = new Float64Array(256), hid0 = new Float64Array(256);
+    for (var i = 0; i < n; i++){
+      var o = i*4, a = col[o+3];
+      pix(col, o, unmult, c);
+      var l = lum ? (unmult && state.lumaPremul && a > 0 && a < 255 ? Math.min(255, lum[o] * 255 / a) : lum[o]) : lumaOf(c[0], c[1], c[2], mode);
+      l = l < 0 ? 0 : (l > 255 ? 255 : Math.round(l));
+      L0[i] = l;
+      if (a < alphaMin){ if (a > 0) hid0[l]++; continue; }
+      var w = weightOf(c, satMode);
+      cnt0[l]++; wsum0[l] += w; sum0[l*3] += c[0]*w; sum0[l*3+1] += c[1]*w; sum0[l*3+2] += c[2]*w;
+    }
+    p1 = state.pass1 = {key:key, L:L0, sum:sum0, cnt:cnt0, wsum:wsum0, hid:hid0};
   }
+  var L = p1.L, sum = p1.sum, cnt = p1.cnt, wsum = p1.wsum, hid = p1.hid;
 
-  var valid = new Uint8Array(256), raw = new Float64Array(256*3), anyValid = 0;
+  var valid = new Uint8Array(256), raw = new Float64Array(256*3), anyValid = 0, present = 0, visible = 0, hidden = 0, hiddenLevels = 0;
   for (var v = 0; v < 256; v++){
+    if (cnt[v] > 0){ present++; visible += cnt[v]; }
+    hidden += hid[v];
+    if (hid[v] > 0 && cnt[v] === 0) hiddenLevels++;
     if (cnt[v] >= minCount){
       valid[v] = 1; anyValid++;
-      raw[v*3] = sum[v*3]/cnt[v]; raw[v*3+1] = sum[v*3+1]/cnt[v]; raw[v*3+2] = sum[v*3+2]/cnt[v];
+      raw[v*3] = sum[v*3]/wsum[v]; raw[v*3+1] = sum[v*3+1]/wsum[v]; raw[v*3+2] = sum[v*3+2]/wsum[v];
     }
   }
+  /* совет зависит от причины: опускать порог альфы имеет смысл, только если полупрозрачные пиксели добавят уровни */
   if (anyValid < 2){
-    show("Слишком мало данных: почти ни на одном уровне яркости не набралось нужного числа пикселей. Опустите минимум пикселей на уровень.", "warn");
-    setSaveDisabled(true);
+    clearResults();
+    var why;
+    if (!visible) why = hidden ? "все пиксели прозрачнее порога альфы. Опустите «Порог альфы»." : "изображение полностью прозрачное.";
+    else if (present < 2) why = "у видимых пикселей всего один уровень яркости — восстанавливать нечего." +
+      (hiddenLevels ? " У полупрозрачных краёв уровни другие — чтобы учесть и их, опустите «Порог альфы»." : "");
+    else why = "почти ни на одном уровне яркости не набралось нужного числа пикселей. Опустите минимум пикселей на уровень" +
+      (hidden > visible ? " или «Порог альфы» — у большинства пикселей альфа ниже него." : ".");
+    show("Слишком мало данных: " + why, "data");
     return;
   }
-  if (el("msg").textContent.indexOf("Слишком мало данных") === 0) show("");
+  if (el("msg").dataset.kind === "data") showLoadNote();
 
   fillGaps(raw, valid, 0);
   var r1 = smoothLevels(raw, k);
@@ -498,13 +735,16 @@ function compute(){
   var r2 = null;
   if (twoD){
     var meanD = new Float64Array(256);
-    for (var v1 = 0; v1 < 256; v1++) meanD[v1] = cnt[v1] ? (sum[v1*3] - sum[v1*3+2]) / cnt[v1] : 0;
+    for (var v1 = 0; v1 < 256; v1++) meanD[v1] = wsum[v1] ? (sum[v1*3] - sum[v1*3+2]) / wsum[v1] : 0;
 
+    /* шкалу оттенка задаёт только содержимое: у чёрного фона отклонение ≈ 0, и если его много (искры на чёрном),
+       98-й перцентиль падает почти до нуля, а большинство цветных пикселей упирается в крайние полосы */
     var hist = new Float64Array(511), tot = 0;
     for (var i2 = 0; i2 < n; i2++){
       var o2 = i2*4;
       if (col[o2+3] < alphaMin) continue;
       pix(col, o2, unmult, c);
+      if (isBlack(c)) continue;
       var dv = Math.round(Math.abs((c[0] - c[2]) - meanD[L[i2]]));
       hist[Math.min(510, dv)]++; tot++;
     }
@@ -512,7 +752,7 @@ function compute(){
     for (var s = 0; s < 511; s++){ acc += hist[s]; if (acc >= tot*0.98){ scale = Math.max(1, s); break; } }
     state.hueScale = scale;
 
-    var bs = new Float64Array(256*bands*3), bc = new Float64Array(256*bands);
+    var bs = new Float64Array(256*bands*3), bc = new Float64Array(256*bands), bw = new Float64Array(256*bands), bq = new Float64Array(256*bands);
     for (var i3 = 0; i3 < n; i3++){
       var o3 = i3*4;
       pix(col, o3, unmult, c);
@@ -523,11 +763,40 @@ function compute(){
       if (col[o3+3] < alphaMin) continue;
       var band = Math.min(bands-1, Math.floor(qb/255*bands));
       var cell = L[i3]*bands + band;
-      bc[cell]++; bs[cell*3] += c[0]; bs[cell*3+1] += c[1]; bs[cell*3+2] += c[2];
+      var w2 = weightOf(c, satMode);
+      bc[cell]++; bw[cell] += w2; bq[cell] += w2*qb/255;
+      bs[cell*3] += c[0]*w2; bs[cell*3+1] += c[1]*w2; bs[cell*3+2] += c[2]*w2;
     }
 
-    /* в каждой полосе храним смещение от 1D-рампы: пустые ячейки интерполируются, пустая полоса = 1D */
+    /* Среднее по полосе — это цвет в средней точке её пикселей q̄, а Unity читает полосу в её центре (b+0.5)/B
+       и смешивает соседние центры. Оттенки обычно сгущаются к среднему, поэтому q̄ крайних полос ближе к 0.5,
+       чем их центры, и без поправки разброс оттенков приглушается (при 2 полосах — примерно вдвое). Поправка:
+       сдвигаем среднее к центру полосы по наклону между соседними заполненными полосами того же уровня.
+       Коэффициент сдвига ограничен ±1 (не дальше, чем до соседнего среднего): когда оттенки на уровне почти
+       одинаковы, средние соседних полос стоят вплотную, и неограниченный наклон уводил бы цвет за 0…255. */
     var cellMin = Math.max(3, Math.round(minCount / bands));
+    var cellVal = new Float64Array(256*bands*3), kb = [];
+    for (var v3 = 0; v3 < 256; v3++){
+      kb.length = 0;
+      for (var b3 = 0; b3 < bands; b3++) if (bc[v3*bands + b3] >= cellMin) kb.push(b3);
+      /* оттенки уровня уместились меньше чем в полполосы — наклон между соседями ненадёжен, оставляем средние */
+      var spread = kb.length > 1 ? bq[v3*bands + kb[kb.length-1]]/bw[v3*bands + kb[kb.length-1]] - bq[v3*bands + kb[0]]/bw[v3*bands + kb[0]] : 0;
+      var useSlope = spread >= 0.5 / bands;
+      for (var j = 0; j < kb.length; j++){
+        var cb = v3*bands + kb[j], qm = bq[cb]/bw[cb], qc = (kb[j] + 0.5)/bands;
+        var nbr = !useSlope ? -1 : (qc >= qm ? (j + 1 < kb.length ? j + 1 : j - 1) : (j > 0 ? j - 1 : j + 1));
+        var cn = nbr >= 0 ? v3*bands + kb[nbr] : -1, dq = cn >= 0 ? bq[cn]/bw[cn] - qm : 0;
+        var fr = dq ? (qc - qm) / dq : 0;
+        fr = fr < -1 ? -1 : (fr > 1 ? 1 : fr);
+        for (var ch = 0; ch < 3; ch++){
+          var mv = bs[cb*3+ch]/bw[cb];
+          if (fr) mv += (bs[cn*3+ch]/bw[cn] - mv) * fr;
+          cellVal[cb*3+ch] = mv;
+        }
+      }
+    }
+
+    /* в каждой полосе храним смещение от 1D-рампы: пустые ячейки интерполируются по яркости, пустая полоса = 1D */
     r2 = new Float64Array(256*bands*3);
     for (var b = 0; b < bands; b++){
       var off = new Float64Array(256*3), known = new Uint8Array(256);
@@ -535,7 +804,7 @@ function compute(){
         var ci = v4*bands + b;
         if (bc[ci] >= cellMin){
           known[v4] = 1;
-          for (var ch = 0; ch < 3; ch++) off[v4*3+ch] = bs[ci*3+ch]/bc[ci] - raw[v4*3+ch];
+          for (var ch6 = 0; ch6 < 3; ch6++) off[v4*3+ch6] = cellVal[ci*3+ch6] - raw[v4*3+ch6];
         }
       }
       fillGaps(off, known, 0);
@@ -605,8 +874,22 @@ function buildExport(){
     img = flipped;
   }
   state.img = img; state.W = W; state.H = H;
+  buildLut();
+}
 
-  /* таблица: цвет, который вернёт билинейная выборка Unity для (яркость, оттенок) */
+function srgbToLinear(v){ v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+function linearToSrgb(v){ return 255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1/2.4) - 0.055); }
+
+/* таблица: цвет, который вернёт билинейная выборка Unity для (яркость, оттенок).
+   В Linear-проекте рампа с sRGB вкл декодируется в линейное пространство до фильтрации, и смешиваются
+   линейные значения; в Gamma-проекте смешиваются байты как есть. */
+function buildLut(){
+  var img = state.img, W = state.W, H = state.H;
+  var linear = el("colorspace").value === "linear";
+  var tex = new Float32Array(W*H*3);
+  for (var t = 0; t < W*H; t++){
+    for (var ch = 0; ch < 3; ch++) tex[t*3+ch] = linear ? srgbToLinear(img[t*4+ch]) : img[t*4+ch];
+  }
   var lut = new Float32Array(256*256*3);
   for (var l = 0; l < 256; l++){
     var tx = l/255*W - 0.5; tx = Math.max(0, Math.min(W-1, tx));
@@ -617,9 +900,10 @@ function buildExport(){
       /* строки в img перевёрнуты: V = ty соответствует строке H-1-ty */
       var r0 = (H-1-y0)*W, r1 = (H-1-y1)*W;
       for (var ch2 = 0; ch2 < 3; ch2++){
-        var a = img[(r0+x0)*4+ch2]*(1-fx) + img[(r0+x1)*4+ch2]*fx;
-        var c2 = img[(r1+x0)*4+ch2]*(1-fx) + img[(r1+x1)*4+ch2]*fx;
-        lut[(l*256+q)*3+ch2] = a*(1-fy) + c2*fy;
+        var a = tex[(r0+x0)*3+ch2]*(1-fx) + tex[(r0+x1)*3+ch2]*fx;
+        var c2 = tex[(r1+x0)*3+ch2]*(1-fx) + tex[(r1+x1)*3+ch2]*fx;
+        var v = a*(1-fy) + c2*fy;
+        lut[(l*256+q)*3+ch2] = linear ? linearToSrgb(v) : v;
       }
     }
   }
@@ -638,17 +922,44 @@ function exportCanvas(){
 
 /* ---------- rendering ---------- */
 
-function renderStrip(){
+/* Результат, который не относится к текущим настройкам или к новому изображению, показывать нельзя: L, Q и рампа
+   уже не про них. Изображение при этом загружено, поэтому вместо полосы — нейтральная заглушка, а не зона
+   «перетащите файл»; размер превью сохраняется, чтобы колонка не прыгала при движении ползунка. */
+function clearResults(){
+  state.L = state.Q = state.r1 = state.r2 = state.ramp = state.valid = state.img = state.lut = null;
+  state.keypoints = []; state.W = state.H = 0;
   var strip = el("strip");
-  strip.className = "strip reveal";
+  strip.className = "strip nodata";
   strip.removeAttribute("tabindex");
   strip.removeAttribute("role");
-  strip.textContent = "";
-  var img = document.createElement("img");
+  strip.innerHTML = '<div class="drop-copy">Рампы нет — не хватает данных, подробности ниже.</div>';
+  el("coverage").hidden = el("scale").hidden = el("legend").hidden = true;
+  el("stripinfo").textContent = "";
+  el("kptable").textContent = "";
+  el("err").textContent = "—";
+  el("errdetail").textContent = el("verdict").textContent = "";
+  var cv = el("recon");
+  cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
+  setSaveDisabled(true);
+  updateSizeHint();
+}
+
+/* картинка создаётся заново только для нового файла: иначе анимация проигрывается на каждом движении ползунка */
+function renderStrip(){
+  var strip = el("strip");
+  var img = strip.querySelector("img");
+  if (!img || state.fresh){
+    strip.className = state.fresh ? "strip reveal" : "strip";
+    strip.removeAttribute("tabindex");
+    strip.removeAttribute("role");
+    strip.textContent = "";
+    img = document.createElement("img");
+    img.alt = "Экспортируемая рампа";
+    img.style.imageRendering = "pixelated";
+    strip.appendChild(img);
+    state.fresh = false;
+  }
   img.src = exportCanvas().toDataURL("image/png");
-  img.alt = "Экспортируемая рампа";
-  img.style.imageRendering = "pixelated";
-  strip.appendChild(img);
   el("stripinfo").textContent = "превью = файл " + state.W + "×" + state.H + (state.r2 ? " (верх — тёплые оттенки, низ — холодные)" : "");
   el("coverage").hidden = false;
   el("scale").hidden = false;
@@ -665,41 +976,32 @@ function renderCoverage(){
   }
 }
 
-/* Douglas-Peucker on the RGB polyline of the 1D ramp */
+/* Douglas-Peucker on the RGB polyline of the 1D ramp, с заданным числом точек: начинаем с концов и каждый раз
+   добавляем точку, дальше всех отстоящую от текущей ломаной. Подбор допуска так не умеет — число точек
+   при нём меняется скачками, и 3 или 5 точек могло не получиться вовсе. Останавливаемся раньше, только если
+   ломаная уже совпадает с рампой с точностью до округления. */
 function simplify(target){
   var pts = [];
   for (var v = 0; v < 256; v++) pts.push([v, state.ramp[v*3], state.ramp[v*3+1], state.ramp[v*3+2]]);
 
-  function rdp(slice, tol){
-    if (slice.length < 3) return slice.slice();
-    var a = slice[0], b = slice[slice.length-1];
-    var maxD = -1, maxI = 0;
-    var span = b[0] - a[0] || 1;
-    for (var i = 1; i < slice.length - 1; i++){
-      var p = slice[i];
-      var t = (p[0] - a[0]) / span;
-      var d = 0;
-      for (var c = 1; c <= 3; c++){
-        var proj = a[c] + (b[c] - a[c]) * t;
-        d += (p[c] - proj) * (p[c] - proj);
+  var keep = [0, 255];
+  while (keep.length < target){
+    var maxD = -1, maxI = -1, at = 0;
+    for (var s = 0; s < keep.length - 1; s++){
+      var a = pts[keep[s]], b = pts[keep[s+1]], span = b[0] - a[0];
+      for (var i = keep[s] + 1; i < keep[s+1]; i++){
+        var p = pts[i], t = (p[0] - a[0]) / span, d = 0;
+        for (var c = 1; c <= 3; c++){
+          var proj = a[c] + (b[c] - a[c]) * t;
+          d += (p[c] - proj) * (p[c] - proj);
+        }
+        if (d > maxD){ maxD = d; maxI = i; at = s + 1; }
       }
-      d = Math.sqrt(d);
-      if (d > maxD){ maxD = d; maxI = i; }
     }
-    if (maxD <= tol) return [a, b];
-    var left = rdp(slice.slice(0, maxI+1), tol);
-    var right = rdp(slice.slice(maxI), tol);
-    return left.slice(0, -1).concat(right);
+    if (maxI < 0 || Math.sqrt(maxD) <= 1) break;
+    keep.splice(at, 0, maxI);
   }
-
-  var lo = 0.05, hi = 160, best = rdp(pts, lo);
-  for (var it = 0; it < 40; it++){
-    var mid = (lo + hi) / 2;
-    var r = rdp(pts, mid);
-    if (r.length > target) lo = mid; else { hi = mid; best = r; }
-    if (r.length === target) { best = r; break; }
-  }
-  return best;
+  return keep.map(function(i){ return pts[i]; });
 }
 
 function hex(r, g, b){
@@ -740,8 +1042,9 @@ function renderKeypoints(){
 
 /* превью и ошибка считаются по экспортируемой рампе с билинейной выборкой, как в Unity */
 function renderRecon(){
-  var maxW = 460;
-  var scale = Math.min(1, maxW / state.w);
+  /* высота тоже ограничена: вертикальный флипбук 256×16384 иначе вытягивает колонку на десятки тысяч пикселей */
+  var maxW = 460, maxH = 920;
+  var scale = Math.min(1, maxW / state.w, maxH / state.h);
   var w = Math.max(1, Math.round(state.w * scale));
   var h = Math.max(1, Math.round(state.h * scale));
 
@@ -757,8 +1060,11 @@ function renderRecon(){
   var errSum = 0, errN = 0, n = col.length/4;
   for (var i = 0; i < n; i++){
     var o = i*4;
-    if (col[o+3] < alphaMin || L[i] <= 10) continue;   // чёрный фон не считаем, иначе он «разбавляет» ошибку
+    if (col[o+3] < alphaMin) continue;
     pix(col, o, unmult, c);
+    /* чёрный фон не считаем, иначе он «разбавляет» ошибку. Фон — это почти чёрный цвет, а не низкая яркость:
+       насыщенный тёмно-синий (0,0,138) по Rec. 709 тоже даёт яркость 10, но это содержимое */
+    if (isBlack(c)) continue;
     var t = (L[i]*256 + Q[i])*3;
     errSum += Math.abs(lut[t] - c[0]) + Math.abs(lut[t+1] - c[1]) + Math.abs(lut[t+2] - c[2]);
     errN += 3;
@@ -772,38 +1078,56 @@ function renderRecon(){
       var si = sy * state.w + sx;
       var t2 = (L[si]*256 + Q[si])*3;
       var oo = (y*w + x) * 4;
-      out.data[oo] = lut[t2]; out.data[oo+1] = lut[t2+1]; out.data[oo+2] = lut[t2+2]; out.data[oo+3] = 255;
+      out.data[oo] = lut[t2]; out.data[oo+1] = lut[t2+1]; out.data[oo+2] = lut[t2+2]; out.data[oo+3] = col[si*4+3];
     }
   }
   ctx.putImageData(out, 0, 0);
 
-  var err = errN ? errSum / errN : 0;
-  el("err").textContent = err.toFixed(2) + " / 255";
-
   var vd = el("verdict");
-  if (err < 4){
+  if (!errN){
+    el("err").textContent = "—";
+    el("errdetail").textContent = "Сравнивать не с чем: все видимые пиксели почти чёрные, а чёрный фон не учитывается.";
+    vd.className = "verdict ok"; vd.textContent = "";
+    return;
+  }
+  var err = errSum / errN;
+  var pct = 100 - err / 255 * 100;
+  el("err").textContent = pct.toFixed(1) + "%";
+
+  var word;
+  if (err < 3) word = "на глаз не отличить";
+  else if (err < 6) word = "почти не отличить, разницу видно только если поставить рядом";
+  else if (err < 10) word = "видно при сравнении рядом: цвета чуть ровнее, чем в оригинале";
+  else if (err < 18) word = "заметно отличается";
+  else word = "сильно отличается";
+  el("errdetail").textContent = "Результат: " + word + ". В среднем цвет каждого видимого пикселя отличается от оригинала на " +
+    err.toFixed(1) + " из 255 по каждому каналу R, G, B. Чёрный фон не учитывается.";
+
+  if (err < 6){
     vd.className = "verdict ok";
-    vd.textContent = "Раскраска оригинала полностью описывается этой рампой. Результат можно использовать как есть.";
+    vd.textContent = "Можно использовать как есть.";
   } else if (err < 12){
     vd.className = "verdict ok";
     vd.textContent = is2D()
-      ? "Близко. Больше полос по высоте или меньшее сглаживание обычно уменьшают ошибку."
-      : "Близко, но не идеально: на одной яркости в оригинале встречаются разные оттенки. Режим 2D это учитывает.";
+      ? "Чтобы приблизить: больше полос по высоте, рампа пошире или меньше сглаживание."
+      : "Причина обычно в том, что у пикселей одной яркости в оригинале разные оттенки. Режим 2D это учитывает.";
   } else {
     vd.className = "verdict warn";
-    vd.textContent = "Расхождение заметное. Попробуйте режим 2D, другую формулу яркости или рампу пошире.";
+    vd.textContent = "Попробуйте режим 2D, рампу пошире или другую формулу яркости.";
   }
 }
 
 function renderModeText(){
   var two = is2D();
+  el("outh").options[0].disabled = two;   // в 2D меньше двух полос не бывает
+  if (two && +el("outh").value < 2) el("outh").value = "8";
   el("modehint").textContent = two
     ? "Ч/б получает второй канал: R — яркость, G — оттенок (0.5 — средний, выше — теплее). Рампа становится двумерной: по X яркость, по Y оттенок. Так сохраняется пестрота искр, которую одна рампа усредняет."
     : "Обычная рампа: один цвет на каждый уровень яркости.";
   el("outhlabel").textContent = two ? "Полос по оттенку" : "Высота (повтор строки)";
   el("unityhint").textContent = two
-    ? "Unity: ч/б — sRGB выкл, без сжатия по цвету (или RG-формат); рампа — sRGB вкл, Clamp, без мипов, без сжатия. В графе UV рампы = (R, G) ч/б."
-    : "Unity: ч/б — sRGB выкл; рампа — sRGB вкл, Clamp, без мипов, без сжатия. В графе UV рампы = (R, 0.5).";
+    ? "Unity: ч/б — sRGB выкл, без сжатия (сжатие сдвигает яркость и оттенок; RG-формат годится, только если альфа не нужна); рампа — sRGB вкл, Clamp, без мипов, без сжатия. В графе UV рампы = (R, G) ч/б."
+    : "Unity: ч/б — sRGB выкл, без сжатия (сжатие сдвигает яркость, и цвета рампы поплывут); рампа — sRGB вкл, Clamp, без мипов, без сжатия. В графе UV рампы = (R, 0.5).";
 }
 
 function updateSizeHint(){
@@ -813,12 +1137,129 @@ function updateSizeHint(){
 
 /* ---------- export ---------- */
 
-function toBlob(canvas){
-  return new Promise(function(res){ canvas.toBlob(res, "image/png"); });
+/* PNG пишется вручную: canvas.toBlob прогоняет пиксели через премультипликацию и портит RGB
+   у полупрозрачных пикселей, а ч/б несёт альфу исходника. Здесь байты попадают в файл без изменений. */
+var CRC_TABLE = null;
+function crc32(buf, start, end){
+  if (!CRC_TABLE){
+    CRC_TABLE = new Uint32Array(256);
+    for (var n = 0; n < 256; n++){
+      var c = n;
+      for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+      CRC_TABLE[n] = c >>> 0;
+    }
+  }
+  var crc = 0xFFFFFFFF;
+  for (var i = start; i < end; i++) crc = CRC_TABLE[(crc ^ buf[i]) & 255] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
 }
 
-async function download(canvas, name){
-  var blob = await toBlob(canvas);
+function pngChunk(type, data){
+  var out = new Uint8Array(12 + data.length), dv = new DataView(out.buffer);
+  dv.setUint32(0, data.length);
+  for (var i = 0; i < 4; i++) out[4+i] = type.charCodeAt(i);
+  out.set(data, 8);
+  dv.setUint32(8 + data.length, crc32(out, 4, 8 + data.length));
+  return out;
+}
+
+/* строки y0…y1 с фильтром Paeth (тип 4) — один проход, хорошо жмёт и гладкие карты, и шум */
+/* строка y из RGBA в формат файла: ch = 1 — серый, 2 — серый + альфа, 3 — RGB, 4 — RGBA */
+function packRow(rgba, w, y, ch, dst){
+  var s = y*w*4;
+  if (ch === 4){ dst.set(rgba.subarray(s, s + w*4)); return; }
+  for (var x = 0, o = s, d = 0; x < w; x++, o += 4){
+    if (ch === 1) dst[d++] = rgba[o];
+    else if (ch === 2){ dst[d++] = rgba[o]; dst[d++] = rgba[o+3]; }
+    else { dst[d++] = rgba[o]; dst[d++] = rgba[o+1]; dst[d++] = rgba[o+2]; }
+  }
+}
+
+/* строки y0…y1 с фильтром Paeth (тип 4) — один проход, хорошо жмёт и гладкие карты, и шум */
+function paethRows(rgba, w, y0, y1, ch){
+  var stride = w*ch, out = new Uint8Array((y1 - y0) * (stride + 1));
+  var cur = new Uint8Array(stride), prev = new Uint8Array(stride);
+  if (y0 > 0) packRow(rgba, w, y0 - 1, ch, prev);
+  for (var y = y0, p0 = 0; y < y1; y++, p0 += stride + 1){
+    packRow(rgba, w, y, ch, cur);
+    out[p0] = 4;
+    for (var i = 0; i < stride; i++){
+      var x = cur[i], b = prev[i], a = 0, c = 0;
+      if (i >= ch){ a = cur[i-ch]; c = prev[i-ch]; }
+      var p = a + b - c, pa = p > a ? p - a : a - p, pb = p > b ? p - b : b - p, pc = p > c ? p - c : c - p;
+      out[p0+1+i] = x - (pa <= pb && pa <= pc ? a : (pb <= pc ? b : c));
+    }
+    var t = prev; prev = cur; cur = t;
+  }
+  return out;
+}
+
+/* Кодирование идёт порциями по несколько мегабайт с передачей управления странице между ними: на 8K-флипбуке
+   иначе она замирает на секунды. Сжатые данные пишутся несколькими IDAT подряд (стандарт это допускает),
+   поэтому целиком в памяти они не собираются. Лишние каналы не пишутся: у ч/б в 1D R = G = B, у непрозрачной
+   картинки альфа 255 — файл тогда серый или без альфы, значения при чтении те же, а сжимать в 2–4 раза меньше. */
+async function encodePNG(rgba, w, h){
+  var grey = true, opaque = true;
+  for (var o = 0; o < rgba.length && (grey || opaque); o += 4){
+    if (rgba[o] !== rgba[o+1] || rgba[o] !== rgba[o+2]) grey = false;
+    if (rgba[o+3] !== 255) opaque = false;
+  }
+  var ch = grey ? (opaque ? 1 : 2) : (opaque ? 3 : 4);
+  var colorType = [0, 0, 4, 2, 6][ch];
+  var cs = new CompressionStream("deflate"), writer = cs.writable.getWriter(), reader = cs.readable.getReader();
+  var idat = [], pend = [], pendLen = 0;
+  function flush(){
+    if (!pendLen) return;
+    var d = new Uint8Array(pendLen), p = 0;
+    for (var i = 0; i < pend.length; i++){ d.set(pend[i], p); p += pend[i].length; }
+    idat.push(pngChunk("IDAT", d));
+    pend = []; pendLen = 0;
+  }
+  var reading = (async function(){
+    for (;;){
+      var r = await reader.read();
+      if (r.done) break;
+      pend.push(r.value); pendLen += r.value.length;
+      if (pendLen >= 1 << 20) flush();
+    }
+    flush();
+  })();
+  reading.catch(function(){});   // ошибка всё равно всплывёт на await reading ниже
+  var rows = Math.max(1, Math.floor((4 << 20) / (w*ch + 1)));
+  for (var y = 0; y < h; y += rows){
+    await writer.write(paethRows(rgba, w, y, Math.min(h, y + rows), ch));
+    if (y + rows < h) await new Promise(function(r){ setTimeout(r, 0); });
+  }
+  await writer.close();
+  await reading;
+  var ihdr = new Uint8Array(13), dv = new DataView(ihdr.buffer);
+  dv.setUint32(0, w); dv.setUint32(4, h);
+  ihdr[8] = 8; ihdr[9] = colorType;   // 8 бит на канал, без интерлейса
+  return new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk("IHDR", ihdr)]
+    .concat(idat, [pngChunk("IEND", new Uint8Array(0))]), {type:"image/png"});
+}
+
+/* запасной путь для браузеров без CompressionStream: у непрозрачных пикселей он тоже точен */
+function canvasPNG(rgba, w, h){
+  var c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  var ctx = c.getContext("2d");
+  var id = ctx.createImageData(w, h);
+  id.data.set(rgba);
+  ctx.putImageData(id, 0, 0);
+  return new Promise(function(res, rej){
+    c.toBlob(function(b){ b ? res(b) : rej(new Error("браузер не смог закодировать PNG " + w + " × " + h)); }, "image/png");
+  });
+}
+
+async function toPNG(rgba, w, h){
+  if (typeof CompressionStream === "function"){
+    try { return await encodePNG(rgba, w, h); } catch(e){ /* ниже — запасной путь */ }
+  }
+  return canvasPNG(rgba, w, h);
+}
+
+async function download(blob, name){
   var url = URL.createObjectURL(blob);
   var a = document.createElement("a");
   a.href = url; a.download = name;
@@ -833,54 +1274,76 @@ function baseName(){
 }
 
 /* ч/б из тех же L и Q, по которым собрана рампа. 1D: RGB = яркость. 2D: R = яркость, G = оттенок. Альфа исходника. */
-function greyCanvas(){
-  var w = state.w, h = state.h;
-  var c = document.createElement("canvas");
-  c.width = w; c.height = h;
-  var ctx = c.getContext("2d");
-  var img = ctx.createImageData(w, h);
+function greyPixels(){
   var col = state.colorData, L = state.L, Q = state.Q, two = !!state.r2;
+  var img = new Uint8ClampedArray(L.length * 4);
   for (var i = 0, o = 0; i < L.length; i++, o += 4){
-    img.data[o] = L[i];
-    img.data[o+1] = two ? Q[i] : L[i];
-    img.data[o+2] = two ? 0 : L[i];
-    img.data[o+3] = col[o+3];
+    img[o] = L[i];
+    img[o+1] = two ? Q[i] : L[i];
+    img[o+2] = two ? 0 : L[i];
+    img[o+3] = col[o+3];
   }
-  ctx.putImageData(img, 0, 0);
-  return c;
+  return img;
 }
 
-async function saveRamp(){
-  var name = baseName() + "_ramp_" + (state.r2 ? "2d_" : "") + state.W + "x" + state.H + ".png";
-  await download(exportCanvas(), name);
-  return name;
+/* рампа подходит к ч/б, только если собрана по тем же L и Q. Ч/б зависит не от всех настроек (формула яркости,
+   «снять умножение», режим, а в 2D ещё и то, что задаёт оттенок), поэтому при раздельном сохранении сверяем отпечатки */
+function greyPrint(){
+  var h = 2166136261, L = state.L, Q = state.Q, two = !!state.r2;
+  for (var i = 0; i < L.length; i++){
+    h = Math.imul(h ^ L[i], 16777619);
+    if (two) h = Math.imul(h ^ Q[i], 16777619);
+  }
+  return (two ? "2d:" : "1d:") + (h >>> 0);
 }
 
-async function saveGrey(){
-  var name = baseName() + (state.r2 ? "_lumhue.png" : "_grey.png");
-  await download(greyCanvas(), name);
-  return name;
+/* пара определяется именем файлов: повторная загрузка той же текстуры после правки сравнивается с прошлым сохранением */
+function pairWarning(base){
+  var s = state.saved[base] || {};
+  return s.ramp && s.grey && s.ramp !== s.grey
+    ? " Внимание: сохранённые рампа и ч/б посчитаны по разным настройкам и друг к другу не подходят — сохраните их вместе."
+    : "";
 }
 
-async function save(){
-  if (!state.img) return;
-  show("Файл " + await saveRamp() + " отправлен в загрузки.");
-}
-
-async function saveGreyOnly(){
-  if (!state.img) return;
-  show("Файл " + await saveGrey() + " отправлен в загрузки.");
-}
-
-async function saveBoth(){
-  if (!state.img) return;
-  var a = await saveRamp();
-  var b = await saveGrey();
-  show("Файлы " + a + " и " + b + " отправлены в загрузки. Если браузер спросит про несколько загрузок — разрешите.");
+/* Всё, что уходит в файлы, снимается в момент нажатия: большой PNG кодируется секунды, и если за это время
+   сдвинуть ползунок, рампа и ч/б иначе сохранились бы из разных состояний. */
+var saving = false;
+async function saveFiles(withRamp, withGrey){
+  if (!state.img || saving) return;
+  var two = !!state.r2, base = baseName();
+  var s = {
+    print: greyPrint(),
+    img: state.img, W: state.W, H: state.H,
+    rampName: base + "_ramp_" + (two ? "2d_" : "") + state.W + "x" + state.H + ".png",
+    grey: withGrey ? greyPixels() : null, w: state.w, h: state.h,
+    greyName: base + (two ? "_lumhue.png" : "_grey.png")
+  };
+  saving = true; setSaveDisabled(true);
+  show(s.w * s.h > 4e6 && withGrey ? "Готовлю PNG — на такой большой текстуре это несколько секунд…" : "Готовлю PNG…");
+  await new Promise(function(r){ setTimeout(r, 30); });   // дать странице показать сообщение до долгого кодирования
+  var names = [];
+  try {
+    if (withRamp){ await download(await toPNG(s.img, s.W, s.H), s.rampName); names.push(s.rampName); }
+    if (withGrey){ await download(await toPNG(s.grey, s.w, s.h), s.greyName); names.push(s.greyName); }
+  } catch(e){
+    saving = false; setSaveDisabled(!state.img);
+    show("Не удалось сохранить PNG: " + (e && e.message ? e.message : e), "warn");
+    return;
+  }
+  saving = false; setSaveDisabled(!state.img);
+  var rec = state.saved[base] || (state.saved[base] = {ramp:null, grey:null});
+  if (withRamp) rec.ramp = s.print;
+  if (withGrey) rec.grey = s.print;
+  if (baseName() !== base) return;   // пока кодировали, загрузили другую текстуру — не затираем её сообщения
+  var w = pairWarning(base);
+  show((names.length > 1
+    ? "Файлы " + names.join(" и ") + " отправлены в загрузки. Если браузер спросит про несколько загрузок — разрешите."
+    : "Файл " + names[0] + " отправлен в загрузки.") + w, w ? "warn" : "");
 }
 
 function setSaveDisabled(v){
-  el("save").disabled = v; el("savegrey").disabled = v; el("saveboth").disabled = v;
+  v = v || saving;
+  el("save").disabled = v; el("savegrey").disabled = v; el("saveboth").disabled = v; el("copy").disabled = v;
 }
 
 function copyPoints(){
@@ -889,11 +1352,12 @@ function copyPoints(){
     var r = Math.round(p[1]), g = Math.round(p[2]), b = Math.round(p[3]);
     return (p[0]/255).toFixed(3) + "  " + hex(r,g,b) + "  " + r + " " + g + " " + b;
   }).join("\n");
+  var fail = function(){ show("Браузер не отдал буфер обмена. Значения можно выделить в таблице вручную.", "warn"); };
+  /* на http-страницах без HTTPS navigator.clipboard нет вовсе */
+  if (!navigator.clipboard || !navigator.clipboard.writeText){ fail(); return; }
   navigator.clipboard.writeText(lines).then(function(){
     show("Опорные точки скопированы.");
-  }, function(){
-    show("Браузер не отдал буфер обмена. Значения можно выделить в таблице вручную.", "warn");
-  });
+  }, fail);
 }
 
 /* ---------- wiring ---------- */
@@ -906,7 +1370,12 @@ strip.addEventListener("keydown", function(e){
   if (strip.classList.contains("empty") && (e.key === "Enter" || e.key === " ")){ e.preventDefault(); pick(); }
 });
 el("reset").addEventListener("click", pick);
-fileInput.addEventListener("change", function(){ if (fileInput.files.length) handleFiles(fileInput.files); });
+/* value сбрасывается, чтобы повторный выбор того же файла (например, после правки) снова срабатывал;
+   handleFiles копирует список синхронно, до первого await */
+fileInput.addEventListener("change", function(){
+  if (fileInput.files.length) handleFiles(fileInput.files);
+  fileInput.value = "";
+});
 
 ["dragenter","dragover"].forEach(function(ev){
   document.addEventListener(ev, function(e){ e.preventDefault(); strip.classList.add("drag"); });
@@ -928,13 +1397,23 @@ document.addEventListener("paste", function(e){
   }
 });
 
-function recomputeAll(){ compute(); updateSizeHint(); }
+/* на очень больших изображениях браузеру может не хватить памяти на любом пересчёте, не только при загрузке */
+function recomputeAll(){
+  try { compute(); }
+  catch(e){
+    clearResults();
+    show("Браузеру не хватило памяти на изображение " + state.w + " × " + state.h + ". Уменьшите его и попробуйте снова.", "data");
+  }
+  updateSizeHint();
+}
 
 /* смена только ширины (или высоты в 1D) не требует пересчёта пикселей */
 function reexport(){
   if (!state.r1) return;
   if (is2D()) { recomputeAll(); return; }
-  buildExport(); renderStrip(); renderRecon(); updateSizeHint(); show("");
+  buildExport(); renderStrip(); renderRecon(); updateSizeHint();
+  /* «файл сохранён» уже не про текущую рампу, а предупреждения о входных файлах остаются в силе */
+  if (el("msg").dataset.kind !== "warn") show("");
 }
 
 function live(id, labelId, fn){
@@ -950,20 +1429,28 @@ live("smooth", "smoothv", recomputeAll);
 live("alpha", "alphav", recomputeAll);
 live("kpn", "kpnv", renderKeypoints);
 el("luma").addEventListener("change", recomputeAll);
+el("avgmode").addEventListener("change", recomputeAll);
 el("unmult").addEventListener("change", recomputeAll);
+/* высота в 1D (повтор строки) и число полос в 2D — один и тот же select; значение для каждого режима помним отдельно */
+var heightFor = {"1d":"1", "2d":"8"}, curMode = el("mode").value;
 el("mode").addEventListener("change", function(){
-  if (is2D() && +el("outh").value < 2) el("outh").value = "8";
-  if (!is2D()) el("outh").value = "1";
+  heightFor[curMode] = el("outh").value;
+  curMode = el("mode").value;
+  el("outh").value = heightFor[curMode];
   renderModeText();
   recomputeAll();
 });
 el("outw").addEventListener("change", reexport);
 el("outh").addEventListener("change", reexport);
-el("save").addEventListener("click", save);
-el("savegrey").addEventListener("click", saveGreyOnly);
-el("saveboth").addEventListener("click", saveBoth);
+el("colorspace").addEventListener("change", function(){ if (state.img){ buildLut(); renderRecon(); } });
+el("save").addEventListener("click", function(){ saveFiles(true, false); });
+el("savegrey").addEventListener("click", function(){ saveFiles(false, true); });
+el("saveboth").addEventListener("click", function(){ saveFiles(true, true); });
 el("copy").addEventListener("click", copyPoints);
 
+/* браузер может восстановить значения полей после перезагрузки — подписи ползунков берём из них */
+[["minc","mincv"],["smooth","smoothv"],["alpha","alphav"],["kpn","kpnv"]].forEach(function(p){ el(p[1]).textContent = el(p[0]).value; });
+setSaveDisabled(true);
 renderModeText();
 
 })();
